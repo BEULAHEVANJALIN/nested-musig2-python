@@ -1,0 +1,22 @@
+[project]
+name = "musig2-nested"
+version = "0.1.0"
+description = "MuSig2 and Nested MuSig2 implementation"
+requires-python = ">=3.10"
+
+# Our only external dependency.
+# secp256k1lab provides the elliptic curve primitives we'll build on.
+dependencies = [
+    "secp256k1lab",
+]
+
+[project.optional-dependencies]
+# Development dependencies — only needed when working on the project,
+# not when using it.
+dev = [
+    "pytest",       # Test runner
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
