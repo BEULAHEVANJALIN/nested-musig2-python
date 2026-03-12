@@ -1,5 +1,5 @@
 [project]
-name = "musig2-nested"
+name = "nested-musig2-python"
 version = "0.1.0"
 description = "MuSig2 and Nested MuSig2 implementation"
 requires-python = ">=3.10"
