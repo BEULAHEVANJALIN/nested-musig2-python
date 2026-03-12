@@ -1,6 +1,6 @@
 from secp256k1lab.bip340 import schnorr_sign, schnorr_verify
 from secp256k1lab.secp256k1 import GE, Scalar, G
-from secp256k1lab.util import int_from_bytes
+
 from .hashing import hash_sig
 
 def verify_schnorr(agg_pk: GE, msg: bytes, R: GE, s: Scalar) -> bool:
@@ -16,11 +16,14 @@ def verify_schnorr(agg_pk: GE, msg: bytes, R: GE, s: Scalar) -> bool:
     """
     if R.infinity or agg_pk.infinity:
         return False
-    # Compute challenge: c = H_sig(X̃, R, m)
+    # Use even-y versions of both points (BIP 340 convention)
+    R_even = R if R.has_even_y() else -R
+    pk_even = agg_pk if agg_pk.has_even_y() else -agg_pk
+    # Challenge uses x-only bytes (same for P and -P)
     c = hash_sig(agg_pk.to_bytes_xonly(), R.to_bytes_xonly(), msg)
-    # Check: s·G == R + c·X̃
+    # Verification equation: s·G == R_even + c·pk_even
     lhs = int(s) * G
-    rhs = R + int(c) * agg_pk
+    rhs = R_even + int(c) * pk_even
     return lhs == rhs
 
 def verify_schnorr_bip340(pubkey_xonly: bytes, msg: bytes, sig: bytes) -> bool:

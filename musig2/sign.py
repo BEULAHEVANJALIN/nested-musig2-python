@@ -37,6 +37,8 @@ class SigningSession:
         R:          Effective aggregate nonce
         c:          Signature challenge
         msg:        The message being signed
+        nonce_negated: Whether R was negated for even-y
+        key_negated:   Whether X̃ was negated for even-y
     """
     cache: KeyAggCache
     agg_nonces: list[GE]
@@ -44,6 +46,9 @@ class SigningSession:
     R: GE
     c: Scalar
     msg: bytes
+    nonce_negated: bool
+    key_negated: bool
+
 
 def create_session(
     cache: KeyAggCache,
@@ -54,8 +59,9 @@ def create_session(
     Create a signing session from aggregated Round 1 data and the message.
     Algorithm:
         1. b = H_non(X̃, R_1 || R_2, m)  - nonce binding
-        2. R = R_1 · R_2^b              - effective aggregate nonce
-        3. c = H_sig(X̃, R, m)           - signature challenge
+        2. R = R_1 + b·R_2              - effective aggregate nonce
+        3. If R has odd y, negate R     - BIP 340 convention
+        4. c = H_sig(X̃_even, R_even, m) - challenge with even-y points
     Parameters:
         cache:      KeyAggCache from key_agg()
         agg_nonces: [R_1, R_2] from aggregate_nonces()
@@ -70,22 +76,23 @@ def create_session(
     nonces_ser = b"".join(R.to_bytes_compressed() for R in agg_nonces)
     b = hash_nonce(agg_pk_ser, nonces_ser, msg)
     # Step 2: Effective aggregate nonce
-    # R = Σ R_j · b^{j-1} = R_1 · b^0 + R_2 · b^1 = R_1 + b·R_2
     R = GE()  # infinity
     b_power = Scalar(1)  # b^0 = 1
     for j in range(NU):
         R += int(b_power) * agg_nonces[j]
         b_power = b_power * b  # b^{j} for next iteration
     if R.infinity:
-        raise ValueError("Effective aggregate nonce is infinity (degenerate session)")
-    # Step 3: Signature challenge
-    # c = H_sig(X̃, R, m) - BIP 340 order: R || X̃ || m
+        raise ValueError("Effective aggregate nonce is infinity")
+    nonce_negated = not R.has_even_y()
+    if nonce_negated:
+        R = -R
+    key_negated = not cache.agg_pk.has_even_y()
+    # Step 4: Signature challenge
     c = hash_sig(
         cache.agg_pk.to_bytes_xonly(),
         R.to_bytes_xonly(),
         msg,
     )
-    # Step 4: Return the session object with all computed values
     return SigningSession(
         cache=cache,
         agg_nonces=agg_nonces,
@@ -93,6 +100,8 @@ def create_session(
         R=R,
         c=c,
         msg=msg,
+        nonce_negated=nonce_negated,
+        key_negated=key_negated,
     )
 
 def sign(
@@ -103,15 +112,12 @@ def sign(
 ) -> Scalar:
     """
     Compute a partial signature (Sign' algorithm).
-    s_i = a_i · c · x_i + Σ_j r_{i,j} · b^{j-1}   (mod n)
-    For ν = 2:
-        s_i = a_i · c · x_i + r_{i,1} + r_{i,2} · b
-    Parameters:
-        session:        SigningSession from create_session()
-        signer_nonce:   SignerNonce from generate_nonce()
-        signer_privkey: The signer's private key x_i
-        signer_pubkey:  The signer's public key X_i
-    Returns: Scalar (the partial signature s_i)
+        s_i = a_i · c · x_i + r_{i,1} + r_{i,2} · b   (mod n)
+    With BIP 340 even-y adjustments:
+        s_i = g_key · a_i · c · x_i  +  g_nonce · (r_{i,1} + r_{i,2} · b)
+    where:
+        g_key   = -1 if X̃ had odd y, else 1
+        g_nonce = -1 if R had odd y, else 1
     """
     # Get the secret nonces (one-time use!)
     sec_nonces = signer_nonce.get_sec_nonces()
@@ -120,17 +126,19 @@ def sign(
         signer_pubkey,
         session.cache.second_key_bytes,
     )
-    # Compute the "key part": a_i · c · x_i
+    # Key part: a_i · c · x_i, negated if aggregate key had odd y
     key_part = a_i * session.c * signer_privkey
-    # Compute the "nonce part": Σ r_{i,j} · b^{j-1}
+    if session.key_negated:
+        key_part = -key_part
+    # Nonce part: Σ r_{i,j} · b^{j-1}, negated if aggregate nonce had odd y
     nonce_part = Scalar(0)
-    b_power = Scalar(1)  # b^0 = 1
+    b_power = Scalar(1)
     for j in range(NU):
         nonce_part = nonce_part + sec_nonces[j] * b_power
-        b_power = b_power * session.b  # b^j for next iteration
-    # Partial signature
-    s_i = key_part + nonce_part
-    return s_i
+        b_power = b_power * session.b
+    if session.nonce_negated:
+        nonce_part = -nonce_part
+    return key_part + nonce_part
 
 
 def verify_partial_sig(
@@ -141,28 +149,29 @@ def verify_partial_sig(
 ) -> bool:
     """
     Verify a partial signature from a specific signer.
-    Checks: s_i · G  =?  R̂_i + a_i · c · X_i
-    where R̂_i = Σ R_{i,j} · b^{j-1} = R_{i,1} + b · R_{i,2}
-    Parameters:
-        session:           SigningSession
-        signer_pubkey:     X_i - the signer's public key
-        signer_pub_nonces: [R_{i,1}, R_{i,2}] - signer's public nonces
-        partial_sig:       s_i - the partial signature to verify
+    Checks: s_i · G  =?  g_nonce · R̂_i  +  g_key · a_i · c · X_i
+    where R̂_i = R_{i,1} + b · R_{i,2} is the signer's effective nonce.
+    The g_nonce and g_key factors account for BIP 340 even-y negation.
     """
-    # Compute signer's effective nonce: R̂_i = Σ R_{i,j} · b^{j-1}
+    # Signer's effective nonce: R̂_i = Σ R_{i,j} · b^{j-1}
     R_hat_i = GE()
     b_power = Scalar(1)
     for j in range(NU):
         R_hat_i += int(b_power) * signer_pub_nonces[j]
         b_power = b_power * session.b
+    if session.nonce_negated:
+        R_hat_i = -R_hat_i
     a_i = key_agg_coef(
         session.cache.keyset_hash,
         signer_pubkey,
         session.cache.second_key_bytes,
     )
-    # Check: s_i · G  =?  R̂_i + a_i · c · X_i
+    key_point = int(a_i * session.c) * signer_pubkey
+    if session.key_negated:
+        key_point = -key_point
+    # Check: s_i · G  =?  R̂_i + key_point
     lhs = int(partial_sig) * G
-    rhs = R_hat_i + int(a_i * session.c) * signer_pubkey
+    rhs = R_hat_i + key_point
     return lhs == rhs
 
 
@@ -175,11 +184,9 @@ def aggregate_partial_sigs(
     SignAgg'(s_1, ..., s_n) : σ = (R, s)
     Algorithm:
         s = Σ s_i   (mod n)
-        σ = (R, s)
-    Parameters:
-        session:      SigningSession
-        partial_sigs: [s_1, s_2, ..., s_n]
+        σ = (R, s)  where R is guaranteed to have even y
     Returns: (R, s) - the aggregate Schnorr signature
+    The output is a valid BIP 340 Schnorr signature.
     """
     if not partial_sigs:
         raise ValueError("No partial signatures to aggregate")
