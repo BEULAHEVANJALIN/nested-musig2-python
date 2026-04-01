@@ -259,9 +259,110 @@ def case_simple_nesting():
     print_verification(root_cache.agg_pk, msg, R, s)
     print("\nPASSED\n") if print_verification(root_cache.agg_pk, msg, R, s) else print("\nFAILED\n")
 
+# Mixed depth
+def case_mixed_depth():
+    print("\ncase 2: Mixed Depth - Nested Group + Individual Signers")
+    width = 50
+    print("\nTree structure:\n")
+    print("Root (X̃)".center(width))
+    print("╱    │     ╲".center(width))
+    print("Group_AB   Carol   Dave".center(width))
+    print("╱   ╲".center(width - 20))
+    print("Alice   Bob".center(width - 20))
+    print("""\n
+    Carol and Dave are individual signers at the top level.
+    Alice and Bob are nested inside Group_AB.\n
+    Note: Carol and Dave cannot tell that Group_AB
+    is a group. From their perspective, it's just another signer
+    with a single public key.\n""")
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    carol = LeafSigner.generate("Carol")
+    dave = LeafSigner.generate("Dave")
+    group_ab = NestedGroup("Group_AB", [alice, bob])
+    top_members = [group_ab, carol, dave]
+    root_cache = key_agg([
+        group_ab.cache.agg_pk, carol.pubkey, dave.pubkey
+    ])
+    print(f"\tRoot  X̃={root_cache.agg_pk.to_bytes_compressed().hex()}")
+    print_tree(group_ab, "  ", is_last=False)
+    print_tree(carol, "  ", is_last=False)
+    print_tree(dave, "  ", is_last=True)
+    msg = b"Mixed depth signing: group + individuals"
+    R, s, agg_pk = run_nested_musig2(top_members, msg)
+    print("\nPASSED\n") if print_verification(agg_pk, msg, R, s) else print("\nFAILED\n")
+
+# Deep nesting (3 levels)
+def case_deep_nesting():
+    print("\ncase 3: Deep Nesting - 3 Levels")
+    print("""
+        Tree structure:
+                    Root (X̃)
+                   ╱        ╲
+            Group_Top       Frank
+           ╱         ╲
+       Group_L       Eve
+      ╱       ╲
+   Alice      Bob
+    \n\tAlice and Bob are at depth 3.\n\tEve is at depth 2.\n\tFrank is at depth 1.
+    \n\tFor Alice:
+        b̌ = b_0 · b̄_GroupTop · b̄_GroupL
+        č = c · a_{GroupTop_in_Root} · a_{GroupL_in_Top} · a_{Alice_in_L}
+    \n\tThree levels of SignAggExt happen during Round 1, all before the message is known.
+    """)
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    eve = LeafSigner.generate("Eve")
+    frank = LeafSigner.generate("Frank")
+    group_l = NestedGroup("Group_L", [alice, bob])
+    group_top = NestedGroup("Group_Top", [group_l, eve])
+    top_members = [group_top, frank]
+    root_cache = key_agg([group_top.cache.agg_pk, frank.pubkey])
+    print(f"\n\tCosigner tree:")
+    print(f"\tRoot  X̃={pk_hex(root_cache.agg_pk)}")
+    print_tree(group_top, "", is_last=False)
+    print_tree(frank, "", is_last=True)
+    print(f"\n\tDepth map:")
+    print(f"\tAlice, Bob\t- depth 3\tb̌ = b_0 · b̄_Top · b̄_L\tč = c · a_Top · a_L · a_leaf")
+    print(f"\tEve\t\t- depth 2\tb̌ = b_0 · b̄_Top\t\tč = c · a_Top · a_Eve")
+    print(f"\tFrank\t\t- depth 1\tb̌ = b_0\t\t\tč = c · a_Frank")
+    msg = b"Deep nesting: 3 levels of MuSig2 recursion"
+    R, s, agg_pk = run_nested_musig2(top_members, msg)
+    print("\nPASSED\n") if print_verification(agg_pk, msg, R, s) else print("\nFAILED\n")
+
+# Privacy property
+def case_privacy():
+    print("\ncase 4: Privacy - Nesting Is Invisible\n")
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    # Direct aggregation (standard MuSig2 key aggregation)
+    direct_cache = key_agg([alice.pubkey, bob.pubkey])
+    # Nested group
+    group = NestedGroup("Group_AB", [alice, bob])
+    direct_hex = direct_cache.agg_pk.to_bytes_compressed().hex()
+    nested_hex = group.cache.agg_pk.to_bytes_compressed().hex()
+    print(f"\tDirect KeyAgg(Alice, Bob):\t{direct_hex}")
+    print(f"\tNested Group_AB key:\t\t{nested_hex}")
+    keys_match = direct_cache.agg_pk == group.cache.agg_pk
+    print(f"\tKeys identical: {'YES' if keys_match else 'NO'}")
+    print("""
+    Both produce the same aggregate key because KeyAgg is used unchanged - it's the same algorithm at every level.
+
+    A verifier who receives a signature for this key cannot determine:
+    \t- Whether nesting was used
+    \t- How many signers participated
+    \t- The internal tree structure
+    \t- Which participants hold which keys
+    """)
+    assert keys_match
+    print("\nPASSED\n")
+
 def main():
     print()
     case_simple_nesting()
+    case_mixed_depth()
+    case_deep_nesting()
+    case_privacy()
 
 if __name__ == "__main__":
     main()
