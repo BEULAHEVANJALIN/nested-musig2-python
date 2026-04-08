@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from common.hashing import hash_nonce, hash_sig
 from musig2.keyagg import KeyAggCache, key_agg_coef
-from musig2.nonce import SignerNonce, NU
+from musig2.nonce import SignerNonce, NU, validate_nonce_points
 
 
 @dataclass
@@ -68,8 +68,7 @@ def create_session(
         msg:        The message to sign
     Returns: SigningSession with all computed values
     """
-    if len(agg_nonces) != NU:
-        raise ValueError(f"Expected {NU} aggregate nonces, got {len(agg_nonces)}")
+    validate_nonce_points(agg_nonces, label="aggregate nonce")
     # Step 1: Nonce binding coefficient
     # b = H_non(X̃, R_1 || R_2, m)
     agg_pk_ser = cache.agg_pk.to_bytes_compressed()
@@ -119,6 +118,10 @@ def sign(
         g_key   = -1 if X̃ had odd y, else 1
         g_nonce = -1 if R had odd y, else 1
     """
+    if signer_pubkey.infinity:
+        raise ValueError("Signer public key cannot be infinity")
+    if signer_pubkey not in session.cache.sorted_pks:
+        raise ValueError("Signer public key is not present in the aggregate key set")
     # Get the secret nonces (one-time use!)
     sec_nonces = signer_nonce.get_sec_nonces()
     a_i = key_agg_coef(
@@ -153,6 +156,14 @@ def verify_partial_sig(
     where R̂_i = R_{i,1} + b · R_{i,2} is the signer's effective nonce.
     The g_nonce and g_key factors account for BIP 340 even-y negation.
     """
+    if signer_pubkey.infinity:
+        return False
+    if signer_pubkey not in session.cache.sorted_pks:
+        return False
+    try:
+        validate_nonce_points(signer_pub_nonces, label="signer public nonce")
+    except ValueError:
+        return False
     # Signer's effective nonce: R̂_i = Σ R_{i,j} · b^{j-1}
     R_hat_i = GE()
     b_power = Scalar(1)

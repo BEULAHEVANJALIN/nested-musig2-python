@@ -14,7 +14,7 @@ Algorithm:
 
 from secp256k1lab.secp256k1 import GE, Scalar
 from common.hashing import hash_nonce_nested
-from musig2.nonce import NU
+from musig2.nonce import NU, validate_nonce_points
 
 def sign_agg_ext(
     internal_agg_nonces: list[GE],
@@ -36,8 +36,7 @@ def sign_agg_ext(
             external_nonces: [R_1, R_2] - what the outer level sees
             b_nested:        Scalar - the inner binding coefficient b̄
     """
-    if len(internal_agg_nonces) != NU:
-        raise ValueError(f"Expected {NU} internal nonces, got {len(internal_agg_nonces)}")
+    validate_nonce_points(internal_agg_nonces, label="internal aggregate nonce")
     # b̄ = H̄_non(X̃, (R'_1, ..., R'_ν))
     pk_ser = group_agg_pk.to_bytes_compressed()
     nonces_ser = b"".join(R.to_bytes_compressed() for R in internal_agg_nonces)
@@ -47,6 +46,8 @@ def sign_agg_ext(
     b_power = Scalar(1)  # b̄^0 = 1
     for j in range(NU):
         R_ext = int(b_power) * internal_agg_nonces[j]
+        if R_ext.infinity:
+            raise ValueError(f"External nonce {j} is infinity")
         external_nonces.append(R_ext)
         b_power = b_power * b_nested  # b̄^j for next iteration
     return external_nonces, b_nested

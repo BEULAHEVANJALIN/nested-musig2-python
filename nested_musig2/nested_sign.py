@@ -87,6 +87,8 @@ class NestedGroup:
     def __init__(self, name: str, members: list):
         self.name = name
         self.members = members
+        if not members:
+            raise ValueError("NestedGroup must contain at least one member")
         # Collect member public keys
         self.member_pubkeys = [
             m.pubkey if isinstance(m, LeafSigner) else m.cache.agg_pk
@@ -203,6 +205,8 @@ def run_nested_musig2(
             )
             # Update accumulated values
             new_c = c_accumulated * a_group
+            if member.b_nested is None:
+                raise ValueError(f"Nested group {member.name} is missing its nested nonce binding")
             new_b = b_accumulated * member.b_nested
             # Recurse into members with this group's cache
             for m in member.members:

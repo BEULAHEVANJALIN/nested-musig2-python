@@ -16,6 +16,15 @@ from dataclasses import dataclass, field
 # BIP 327 specifies ν = 2.
 NU = 2
 
+def validate_nonce_points(pub_nonces: list[GE], *, label: str = "nonce") -> None:
+    """
+    Validate a list of public nonce points received from a signer or subgroup.
+    """
+    if len(pub_nonces) != NU:
+        raise ValueError(f"Expected {NU} {label} points, got {len(pub_nonces)}")
+    for j, point in enumerate(pub_nonces):
+        if point.infinity:
+            raise ValueError(f"{label} point {j} is infinity")
 @dataclass
 class SignerNonce:
     """
@@ -102,15 +111,14 @@ def aggregate_nonces(all_pub_nonces: list[list[GE]]) -> list[GE]:
     if n_signers == 0:
         raise ValueError("No nonces to aggregate")
     for i, nonces in enumerate(all_pub_nonces):
-        if len(nonces) != NU:
-            raise ValueError(
-                f"Signer {i} provided {len(nonces)} nonces, expected {NU}"
-            )
+        validate_nonce_points(nonces, label=f"signer {i} nonce")
     agg_nonces: list[GE] = []
     for j in range(NU):
         # Sum all signers' j-th nonce: R_j = Σ R_{i,j}
         R_j = GE()  # Start with infinity (additive identity)
         for i in range(n_signers):
             R_j += all_pub_nonces[i][j]
+        if R_j.infinity:
+            raise ValueError(f"Aggregate nonce {j} is infinity")
         agg_nonces.append(R_j)
     return agg_nonces
