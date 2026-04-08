@@ -1,18 +1,56 @@
 import os
+from dataclasses import dataclass
 from secp256k1lab.secp256k1 import GE, Scalar, G
 from secp256k1lab.util import int_from_bytes
 from musig2.keyagg import key_agg, key_agg_coef, KeyAggCache
-from musig2.nonce import generate_nonce, aggregate_nonces, SignerNonce, NU
+from musig2.nonce import generate_nonce, aggregate_nonces, SignerNonce, NU, validate_nonce_points
 from musig2.sign import create_session, SigningSession, aggregate_partial_sigs
 from nested_musig2.nonce_ext import sign_agg_ext
 
 
+@dataclass(frozen=True)
+class NestedSigningTranscript:
+    """
+    Explicit signer-visible transcript for one leaf in a nested cosigner tree.
+    """
+    session: SigningSession
+    path_caches: list[KeyAggCache]
+    path_pubkeys: list[GE]
+    nested_nonce_bindings: list[Scalar]
+
+    def __post_init__(self) -> None:
+        if not self.path_caches:
+            raise ValueError("Nested transcript must contain at least one key aggregation level")
+        if len(self.path_caches) != len(self.path_pubkeys):
+            raise ValueError("Each path level must have exactly one public key")
+        if len(self.nested_nonce_bindings) != len(self.path_caches) - 1:
+            raise ValueError("Nested nonce bindings must match the number of nested levels")
+        for cache, pk in zip(self.path_caches, self.path_pubkeys):
+            if pk.infinity:
+                raise ValueError("Transcript path public keys cannot be infinity")
+            if pk not in cache.sorted_pks:
+                raise ValueError("Transcript path public key is not in its parent key set")
+
+    def nonce_factor(self) -> Scalar:
+        b_check = self.session.b
+        for b_nested in self.nested_nonce_bindings:
+            b_check = b_check * b_nested
+        return b_check
+
+    def challenge_factor(self) -> Scalar:
+        c_check = self.session.c
+        for cache, pk in zip(self.path_caches, self.path_pubkeys):
+            a_i = key_agg_coef(cache.keyset_hash, pk, cache.second_key_bytes)
+            c_check = c_check * a_i
+        return c_check
+
+    def leaf_pubkey(self) -> GE:
+        return self.path_pubkeys[-1]
+
 def nested_sign(
-    session: SigningSession,
+    transcript: NestedSigningTranscript,
     signer_nonce: SignerNonce,
     signer_privkey: Scalar,
-    b_check: Scalar,
-    c_check: Scalar,
 ) -> Scalar:
     """
     Compute a partial signature for a leaf signer in a nested cosigner tree.
@@ -23,21 +61,15 @@ def nested_sign(
         s_i = č · x_i + r_{i,1} + r_{i,2} · b̌
 
     Parameters:
-        session:        provides nonce_negated and key_negated
+        transcript:     explicit path transcript for this signer
         signer_nonce:   consumed - single use
         signer_privkey: the leaf signer's private key
-        b_check:        b̌ = product of all nonce hashes along the path
-        c_check:        č = c · product of all key agg coefficients
 
     Returns: s_i partial signature for a leaf signer
-
-    Why b̌ and č are passed in (not computed here):
-    Each leaf signer sits at a specific position in the cosigner tree.
-    The path from the root to this leaf determines which key aggregation
-    coefficients and nonce binding hashes are multiplied together.
-    The orchestrator (run_nested_musig2) traverses the tree and
-    accumulates these products, then passes the result to each leaf.
     """
+    session = transcript.session
+    b_check = transcript.nonce_factor()
+    c_check = transcript.challenge_factor()
     # Consume the nonce (single-use enforcement)
     sec_nonces = signer_nonce.get_sec_nonces()
 
@@ -55,6 +87,43 @@ def nested_sign(
     if session.nonce_negated:
         nonce_part = -nonce_part
     return key_part + nonce_part
+
+def verify_nested_partial_sig(
+    transcript: NestedSigningTranscript,
+    signer_pub_nonces: list[GE],
+    partial_sig: Scalar,
+) -> bool:
+    """
+    Verify a nested partial signature against the signer's explicit path transcript.
+    """
+    try:
+        validate_nonce_points(signer_pub_nonces, label="nested signer public nonce")
+    except ValueError:
+        return False
+
+    session = transcript.session
+    signer_pubkey = transcript.leaf_pubkey()
+    if signer_pubkey.infinity:
+        return False
+
+    b_check = transcript.nonce_factor()
+    c_check = transcript.challenge_factor()
+
+    R_hat_i = GE()
+    b_power = Scalar(1)
+    for j in range(NU):
+        R_hat_i += int(b_power) * signer_pub_nonces[j]
+        b_power = b_power * b_check
+    if session.nonce_negated:
+        R_hat_i = -R_hat_i
+
+    key_point = int(c_check) * signer_pubkey
+    if session.key_negated:
+        key_point = -key_point
+
+    lhs = int(partial_sig) * G
+    rhs = R_hat_i + key_point
+    return lhs == rhs
 
 # Tree data structures
 class LeafSigner:
@@ -169,53 +238,46 @@ def run_nested_musig2(
     partial_sigs: list[Scalar] = []
     def collect_signatures(
         member,
-        parent_cache: KeyAggCache,
-        b_accumulated: Scalar,
-        c_accumulated: Scalar,
+        path_caches: list[KeyAggCache],
+        path_pubkeys: list[GE],
+        nested_bindings: list[Scalar],
     ):
         """
-        Traverse the tree, accumulating b̌ and č, and collect leaf signatures.
-        At each level, we multiply:
-        - b_accumulated by the nonce binding at this level
-        - c_accumulated by the key aggregation coefficient at this level
-        When we reach a leaf, b_accumulated = b̌ and c_accumulated = č.
+        Traverse the tree, collecting the explicit path transcript seen by a leaf.
         """
         if isinstance(member, LeafSigner):
-            # Leaf: compute this signer's coefficient and sign
-            a_i = key_agg_coef(
-                parent_cache.keyset_hash,
-                member.pubkey,
-                parent_cache.second_key_bytes,
+            transcript = NestedSigningTranscript(
+                session=session,
+                path_caches=path_caches,
+                path_pubkeys=path_pubkeys + [member.pubkey],
+                nested_nonce_bindings=nested_bindings,
             )
-            # č for this leaf = c_accumulated · a_i
-            c_check = c_accumulated * a_i
-            # b̌ for this leaf = b_accumulated (already complete)
-            b_check = b_accumulated
-            s_i = nested_sign(
-                session, member.nonce, member.privkey, b_check, c_check,
-            )
+            s_i = nested_sign(transcript, member.nonce, member.privkey)
+            if not verify_nested_partial_sig(transcript, member.nonce.pub_nonces, s_i):
+                raise ValueError(f"Nested partial signature failed verification for leaf {member.name}")
             partial_sigs.append(s_i)
         elif isinstance(member, NestedGroup):
-            # Internal node: multiply in this group's coefficient and b̄
-            # This group's key aggregation coefficient in its parent
-            a_group = key_agg_coef(
-                parent_cache.keyset_hash,
-                member.cache.agg_pk,
-                parent_cache.second_key_bytes,
-            )
-            # Update accumulated values
-            new_c = c_accumulated * a_group
+            # Recurse into members with this group's cache
             if member.b_nested is None:
                 raise ValueError(f"Nested group {member.name} is missing its nested nonce binding")
-            new_b = b_accumulated * member.b_nested
-            # Recurse into members with this group's cache
             for m in member.members:
-                collect_signatures(m, member.cache, new_b, new_c)
+                if isinstance(m, LeafSigner):
+                    collect_signatures(m, path_caches, path_pubkeys, nested_bindings)
+                else:
+                    if m.b_nested is None:
+                        raise ValueError(f"Nested group {m.name} is missing its nested nonce binding")
+                    collect_signatures(
+                        m,
+                        path_caches + [m.cache],
+                        path_pubkeys + [m.cache.agg_pk],
+                        nested_bindings + [m.b_nested],
+                    )
     # Start traversal from root
-    # b̌ starts with b_0 (top-level nonce binding from the session)
-    # č starts with c (the signature challenge from the session)
     for member in top_level_members:
-        collect_signatures(member, root_cache, session.b, session.c)
+        if isinstance(member, LeafSigner):
+            collect_signatures(member, [root_cache], [], [])
+        else:
+            collect_signatures(member, [root_cache, member.cache], [member.cache.agg_pk], [member.b_nested])
 
     #  Step 5: Aggregate 
     R, s = aggregate_partial_sigs(session, partial_sigs)

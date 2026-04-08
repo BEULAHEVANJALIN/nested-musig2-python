@@ -6,7 +6,13 @@ from secp256k1lab.bip340      import schnorr_verify as bip340_verify
 from musig2.keyagg             import key_agg, key_agg_coef
 from musig2.nonce              import generate_nonce, aggregate_nonces, NU
 from musig2.sign               import create_session, aggregate_partial_sigs
-from nested_musig2.nested_sign import LeafSigner, NestedGroup, nested_sign, run_nested_musig2
+from nested_musig2.nested_sign import (
+    LeafSigner,
+    NestedGroup,
+    NestedSigningTranscript,
+    nested_sign,
+    run_nested_musig2,
+)
 from nested_musig2.nonce_ext   import sign_agg_ext
 from common.schnorr            import verify_schnorr
 
@@ -230,7 +236,13 @@ def case_simple_nesting():
         print(f"\t\ta_inner  = {a_inner_str}\t\t({name} in Group_AB)")
         print(f"\t\tb̌ = b_0 · b̄_AB = {scalar_hex(b_ab)}")
         print(f"\t\tč = c · a_outer · a_inner = {scalar_hex(c_check)}")
-        s_i = nested_sign(session, signer.nonce, signer.privkey, b_ab, c_check)
+        transcript = NestedSigningTranscript(
+            session=session,
+            path_caches=[root_cache, group_ab.cache],
+            path_pubkeys=[group_ab.cache.agg_pk, signer.pubkey],
+            nested_nonce_bindings=[ab_b_nested],
+        )
+        s_i = nested_sign(transcript, signer.nonce, signer.privkey)
         partial_sigs.append(s_i)
         print(f"\t\ts_{name} = {scalar_hex(s_i)}")
         print()
@@ -246,7 +258,13 @@ def case_simple_nesting():
         print(f"\t\ta_inner  = {a_inner_str}\t\t({name} in Group_CD)")
         print(f"\t\tb̌ = b_0 · b̄_CD = {scalar_hex(b_cd)}")
         print(f"\t\tč = c · a_outer · a_inner = {scalar_hex(c_check)}")
-        s_i = nested_sign(session, signer.nonce, signer.privkey, b_cd, c_check)
+        transcript = NestedSigningTranscript(
+            session=session,
+            path_caches=[root_cache, group_cd.cache],
+            path_pubkeys=[group_cd.cache.agg_pk, signer.pubkey],
+            nested_nonce_bindings=[cd_b_nested],
+        )
+        s_i = nested_sign(transcript, signer.nonce, signer.privkey)
         partial_sigs.append(s_i)
         print(f"\t\ts_{name} = {scalar_hex(s_i)}")
         print()
