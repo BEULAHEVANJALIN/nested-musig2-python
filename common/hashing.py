@@ -84,3 +84,14 @@ def hash_sig(agg_pk_xonly: bytes, nonce_xonly: bytes, msg: bytes) -> Scalar:
     # BIP 340 order: R || X̃ || m
     data = nonce_xonly + agg_pk_xonly + msg
     return tagged_hash_to_scalar("BIP0340/challenge", data)
+
+
+def hash_session_id(agg_pk_ser: bytes, agg_nonces_ser: bytes, msg: bytes) -> bytes:
+    """
+    Deterministic identifier for one signing session.
+
+    This is not a signature challenge and does not replace transcript hashing used
+    by the protocol. It is only an explicit label that lets the implementation
+    distinguish one signing session from another.
+    """
+    return tagged_hash("NestedMuSig2/session", agg_pk_ser + agg_nonces_ser + msg)
