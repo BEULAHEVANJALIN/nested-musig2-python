@@ -446,6 +446,38 @@ def test_run_nested_musig2_rejects_missing_deep_subgroup_binding():
         assert "missing its nested nonce binding" in str(e)
     print("Nested signing rejects missing deep subgroup bindings")
 
+def test_nested_sign_rejects_nonce_reuse_across_sessions():
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    carol = LeafSigner.generate("Carol")
+    group_ab = NestedGroup("Group_AB", [alice, bob])
+    session_one, root_cache_one, nested_bindings_one = _make_session([group_ab, carol], b"session one")
+    transcript_one = NestedSigningTranscript(
+        session=session_one,
+        path_caches=[root_cache_one, group_ab.cache],
+        path_pubkeys=[group_ab.cache.agg_pk, alice.pubkey],
+        nested_nonce_bindings=[nested_bindings_one["Group_AB"]],
+    )
+    nested_sign(transcript_one, alice.nonce, alice.privkey)
+    alice_2 = LeafSigner("Alice", alice.privkey, alice.pubkey)
+    bob_2 = LeafSigner("Bob", bob.privkey, bob.pubkey)
+    carol_2 = LeafSigner("Carol", carol.privkey, carol.pubkey)
+    group_ab_2 = NestedGroup("Group_AB", [alice_2, bob_2])
+    session_two, root_cache_two, nested_bindings_two = _make_session([group_ab_2, carol_2], b"session two")
+    transcript_two = NestedSigningTranscript(
+        session=session_two,
+        path_caches=[root_cache_two, group_ab_2.cache],
+        path_pubkeys=[group_ab_2.cache.agg_pk, alice_2.pubkey],
+        nested_nonce_bindings=[nested_bindings_two["Group_AB"]],
+    )
+    alice_2.nonce = alice.nonce
+    try:
+        nested_sign(transcript_two, alice_2.nonce, alice_2.privkey)
+        assert False, "Expected nested cross-session nonce reuse to raise RuntimeError"
+    except RuntimeError as e:
+        assert "cross-session nonce reuse" in str(e).lower()
+    print("Nested signing rejects nonce reuse across sessions")
+
 def test_transcript_rejects_inconsistent_path():
     alice = LeafSigner.generate("Alice")
     bob = LeafSigner.generate("Bob")
@@ -484,5 +516,6 @@ if __name__ == "__main__":
     test_transcript_rejects_wrong_path_ordering()
     test_transcript_rejects_wrong_subgroup_key_in_path()
     test_run_nested_musig2_rejects_missing_deep_subgroup_binding()
+    test_nested_sign_rejects_nonce_reuse_across_sessions()
     test_transcript_rejects_inconsistent_path()
     print("\nAll nested MuSig2 tests passed!\n")

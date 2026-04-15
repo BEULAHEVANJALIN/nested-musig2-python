@@ -127,7 +127,7 @@ def sign(
     if signer_pubkey not in session.cache.sorted_pks:
         raise ValueError("Signer public key is not present in the aggregate key set")
     # Get the secret nonces (one-time use!)
-    sec_nonces = signer_nonce.get_sec_nonces()
+    sec_nonces = signer_nonce.get_sec_nonces(session.session_id)
     a_i = key_agg_coef(
         session.cache.keyset_hash,
         signer_pubkey,

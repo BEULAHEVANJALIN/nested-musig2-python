@@ -79,7 +79,7 @@ def nested_sign(
     b_check = transcript.nonce_factor()
     c_check = transcript.challenge_factor()
     # Consume the nonce (single-use enforcement)
-    sec_nonces = signer_nonce.get_sec_nonces()
+    sec_nonces = signer_nonce.get_sec_nonces(session.session_id)
 
     # Key part: č · x_i, negated if aggregate key had odd y
     key_part = c_check * signer_privkey

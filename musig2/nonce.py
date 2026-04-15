@@ -34,6 +34,7 @@ class SignerNonce:
         pub_nonces:  [R_1, R_2] - public commitments, shared with aggregator
         _sec_nonces: [r_1, r_2] - secret scalars, NEVER leave this object
         _used:       safety flag to prevent reuse
+        _session_id: session identifier that consumed this nonce, if any
     Lifecycle:
         1. generate_nonce() creates this with fresh random nonces
         2. pub_nonces are sent to the aggregator
@@ -43,8 +44,9 @@ class SignerNonce:
     pub_nonces: list[GE]
     _sec_nonces: list[Scalar] = field(repr=False)
     _used: bool = field(default=False, repr=False)
+    _session_id: bytes | None = field(default=None, repr=False)
 
-    def get_sec_nonces(self) -> list[Scalar]:
+    def get_sec_nonces(self, session_id: bytes | None = None) -> list[Scalar]:
         """
         Access the secret nonce scalars. Only callable once.
         Raises RuntimeError on attempted reuse.
@@ -53,7 +55,14 @@ class SignerNonce:
         (potentially) different challenge values, enabling private key
         extraction: x = (s - s') / (c - c').
         """
+        if session_id is not None and not session_id:
+            raise RuntimeError("Nonce consumption requires a non-empty session identifier")
         if self._used:
+            if session_id is not None and self._session_id != session_id:
+                raise RuntimeError(
+                    "FATAL: Cross-session nonce reuse detected. "
+                    "This nonce was already consumed by a different signing session."
+                )
             raise RuntimeError(
                 "FATAL: Nonce reuse detected. "
                 "This nonce has already been consumed by sign(). "
@@ -61,6 +70,7 @@ class SignerNonce:
                 "Each SignerNonce MUST be used exactly once."
             )
         self._used = True
+        self._session_id = session_id
         sec = self._sec_nonces
         # Zero out the stored nonces so they can't be recovered
         # from this object even if it's inspected after use.
