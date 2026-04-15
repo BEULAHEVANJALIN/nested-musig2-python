@@ -213,7 +213,6 @@ def test_many_sessions():
         assert _check_bip340(agg_pk, msg, R, s), f"Session {i} failed BIP 340"
     print("20 nested sessions all pass BIP 340 verification")
 
-
 def test_transcript_root_leaf_derives_factors_locally():
     alice = LeafSigner.generate("Alice")
     bob = LeafSigner.generate("Bob")
@@ -229,7 +228,6 @@ def test_transcript_root_leaf_derives_factors_locally():
     assert verify_nested_partial_sig(transcript, alice.nonce.pub_nonces, s_i)
     assert int(transcript.nonce_factor()) == int(session.b)
     print("Root-level leaf derives its own transcript factors")
-
 
 def test_transcript_nested_leaf_derives_factors_locally():
     alice = LeafSigner.generate("Alice")
@@ -249,6 +247,53 @@ def test_transcript_nested_leaf_derives_factors_locally():
     assert int(transcript.nonce_factor()) == int(session.b * nested_bindings["Group_AB"])
     print("Nested leaf derives its own path-dependent transcript factors")
 
+def test_transcript_deep_leaf_derives_factors_locally():
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    carol = LeafSigner.generate("Carol")
+    eve = LeafSigner.generate("Eve")
+    group_l = NestedGroup("Group_L", [alice, bob])
+    group_top = NestedGroup("Group_Top", [group_l, carol])
+    msg = b"deep leaf transcript"
+    session, root_cache, nested_bindings = _make_session([group_top, eve], msg)
+    transcript = NestedSigningTranscript(
+        session=session,
+        path_caches=[root_cache, group_top.cache, group_l.cache],
+        path_pubkeys=[group_top.cache.agg_pk, group_l.cache.agg_pk, alice.pubkey],
+        nested_nonce_bindings=[
+            nested_bindings["Group_Top"],
+            nested_bindings["Group_L"],
+        ],
+    )
+    s_i = nested_sign(transcript, alice.nonce, alice.privkey)
+    assert verify_nested_partial_sig(transcript, alice.nonce.pub_nonces, s_i)
+    assert int(transcript.nonce_factor()) == int(
+        session.b * nested_bindings["Group_Top"] * nested_bindings["Group_L"]
+    )
+    print("Deep leaf derives all path-dependent transcript factors locally")
+
+def test_nested_partial_verifier_rejects_wrong_binding():
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    carol = LeafSigner.generate("Carol")
+    group_ab = NestedGroup("Group_AB", [alice, bob])
+    msg = b"wrong nested binding"
+    session, root_cache, nested_bindings = _make_session([group_ab, carol], msg)
+    good_transcript = NestedSigningTranscript(
+        session=session,
+        path_caches=[root_cache, group_ab.cache],
+        path_pubkeys=[group_ab.cache.agg_pk, alice.pubkey],
+        nested_nonce_bindings=[nested_bindings["Group_AB"]],
+    )
+    s_i = nested_sign(good_transcript, alice.nonce, alice.privkey)
+    bad_transcript = NestedSigningTranscript(
+        session=session,
+        path_caches=[root_cache, group_ab.cache],
+        path_pubkeys=[group_ab.cache.agg_pk, alice.pubkey],
+        nested_nonce_bindings=[nested_bindings["Group_AB"] + Scalar(1)],
+    )
+    assert not verify_nested_partial_sig(bad_transcript, alice.nonce.pub_nonces, s_i)
+    print("Nested partial verification rejects an incorrect nested binding")
 
 def test_transcript_rejects_inconsistent_path():
     alice = LeafSigner.generate("Alice")
@@ -281,5 +326,7 @@ if __name__ == "__main__":
     test_many_sessions()
     test_transcript_root_leaf_derives_factors_locally()
     test_transcript_nested_leaf_derives_factors_locally()
+    test_transcript_deep_leaf_derives_factors_locally()
+    test_nested_partial_verifier_rejects_wrong_binding()
     test_transcript_rejects_inconsistent_path()
     print("\nAll nested MuSig2 tests passed!\n")

@@ -12,6 +12,12 @@ from nested_musig2.nonce_ext import sign_agg_ext
 class NestedSigningTranscript:
     """
     Explicit signer-visible transcript for one leaf in a nested cosigner tree.
+
+    Meanings:
+    - session: the root MuSig2 session containing the top-level b, R, and c
+    - path_caches[i]: the parent keyset at level i, from root toward the leaf
+    - path_pubkeys[i]: this signer's immediate child-node key inside path_caches[i]
+    - nested_nonce_bindings: the nested b_bar values encountered below the root
     """
     session: SigningSession
     path_caches: list[KeyAggCache]
