@@ -295,6 +295,119 @@ def test_nested_partial_verifier_rejects_wrong_binding():
     assert not verify_nested_partial_sig(bad_transcript, alice.nonce.pub_nonces, s_i)
     print("Nested partial verification rejects an incorrect nested binding")
 
+def test_transcript_rejects_wrong_path_ordering():
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    carol = LeafSigner.generate("Carol")
+    eve = LeafSigner.generate("Eve")
+    group_l = NestedGroup("Group_L", [alice, bob])
+    group_top = NestedGroup("Group_Top", [group_l, carol])
+    msg = b"wrong path ordering"
+    session, root_cache, nested_bindings = _make_session([group_top, eve], msg)
+    try:
+        NestedSigningTranscript(
+            session=session,
+            path_caches=[root_cache, group_top.cache, group_l.cache],
+            path_pubkeys=[group_l.cache.agg_pk, group_top.cache.agg_pk, alice.pubkey],
+            nested_nonce_bindings=[
+                nested_bindings["Group_Top"],
+                nested_bindings["Group_L"],
+            ],
+        )
+        assert False, "Expected wrong transcript path ordering to raise ValueError"
+    except ValueError as e:
+        assert "parent key set" in str(e)
+    print("Transcript rejects wrong path ordering")
+
+def test_transcript_rejects_wrong_subgroup_key_in_path():
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    carol = LeafSigner.generate("Carol")
+    eve = LeafSigner.generate("Eve")
+    group_l = NestedGroup("Group_L", [alice, bob])
+    group_top = NestedGroup("Group_Top", [group_l, carol])
+    msg = b"wrong subgroup key"
+    session, root_cache, nested_bindings = _make_session([group_top, eve], msg)
+    good_transcript = NestedSigningTranscript(
+        session=session,
+        path_caches=[root_cache, group_top.cache, group_l.cache],
+        path_pubkeys=[group_top.cache.agg_pk, group_l.cache.agg_pk, alice.pubkey],
+        nested_nonce_bindings=[
+            nested_bindings["Group_Top"],
+            nested_bindings["Group_L"],
+        ],
+    )
+    s_i = nested_sign(good_transcript, alice.nonce, alice.privkey)
+    bad_transcript = NestedSigningTranscript(
+        session=session,
+        path_caches=[root_cache, group_top.cache, group_l.cache],
+        path_pubkeys=[group_top.cache.agg_pk, carol.pubkey, alice.pubkey],
+        nested_nonce_bindings=[
+            nested_bindings["Group_Top"],
+            nested_bindings["Group_L"],
+        ],
+    )
+    assert not verify_nested_partial_sig(bad_transcript, alice.nonce.pub_nonces, s_i)
+    print("Nested partial verification rejects wrong subgroup key paths")
+
+def test_run_nested_musig2_rejects_missing_deep_subgroup_binding():
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    carol = LeafSigner.generate("Carol")
+    eve = LeafSigner.generate("Eve")
+    group_l = NestedGroup("Group_L", [alice, bob])
+    group_top = NestedGroup("Group_Top", [group_l, carol])
+    # Reproduce the run_nested_musig2 nonce-generation phase, then clear the
+    # deeper subgroup binding to simulate incomplete protocol state.
+    def generate_nonces_recursive(member):
+        if isinstance(member, LeafSigner):
+            member.nonce = generate_nonce()
+            return member.nonce.pub_nonces
+        all_member_pub_nonces = []
+        for child in member.members:
+            all_member_pub_nonces.append(generate_nonces_recursive(child))
+        internal_agg = aggregate_nonces(all_member_pub_nonces)
+        external_nonces, b_nested = sign_agg_ext(internal_agg, member.cache.agg_pk)
+        member.internal_agg_nonces = internal_agg
+        member.external_nonces = external_nonces
+        member.b_nested = b_nested
+        return external_nonces
+    top_members = [group_top, eve]
+    top_pubkeys = [m.pubkey if isinstance(m, LeafSigner) else m.cache.agg_pk for m in top_members]
+    root_cache = key_agg(top_pubkeys)
+    top_level_pub_nonces = [generate_nonces_recursive(member) for member in top_members]
+    top_agg_nonces = aggregate_nonces(top_level_pub_nonces)
+    session = create_session(root_cache, top_agg_nonces, b"missing deep subgroup binding")
+    group_l.b_nested = None
+
+    def collect_signatures(member, path_caches, path_pubkeys, nested_bindings):
+        if isinstance(member, LeafSigner):
+            transcript = NestedSigningTranscript(
+                session=session,
+                path_caches=path_caches,
+                path_pubkeys=path_pubkeys + [member.pubkey],
+                nested_nonce_bindings=nested_bindings,
+            )
+            return nested_sign(transcript, member.nonce, member.privkey)
+        if member.b_nested is None:
+            raise ValueError(f"Nested group {member.name} is missing its nested nonce binding")
+        for child in member.members:
+            if isinstance(child, LeafSigner):
+                collect_signatures(child, path_caches, path_pubkeys, nested_bindings)
+            else:
+                collect_signatures(
+                    child,
+                    path_caches + [child.cache],
+                    path_pubkeys + [child.cache.agg_pk],
+                    nested_bindings + [child.b_nested],
+                )
+    try:
+        collect_signatures(group_top, [root_cache, group_top.cache], [group_top.cache.agg_pk], [group_top.b_nested])
+        assert False, "Expected missing deep subgroup binding to raise ValueError"
+    except ValueError as e:
+        assert "missing its nested nonce binding" in str(e)
+    print("Nested signing rejects missing deep subgroup bindings")
+
 def test_transcript_rejects_inconsistent_path():
     alice = LeafSigner.generate("Alice")
     bob = LeafSigner.generate("Bob")
@@ -328,5 +441,8 @@ if __name__ == "__main__":
     test_transcript_nested_leaf_derives_factors_locally()
     test_transcript_deep_leaf_derives_factors_locally()
     test_nested_partial_verifier_rejects_wrong_binding()
+    test_transcript_rejects_wrong_path_ordering()
+    test_transcript_rejects_wrong_subgroup_key_in_path()
+    test_run_nested_musig2_rejects_missing_deep_subgroup_binding()
     test_transcript_rejects_inconsistent_path()
     print("\nAll nested MuSig2 tests passed!\n")
