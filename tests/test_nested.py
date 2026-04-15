@@ -169,6 +169,30 @@ def test_privacy_property():
     )
     print("Privacy: nested group key equals direct aggregation key")
 
+def test_group_key_is_aggregation_of_immediate_children():
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    carol = LeafSigner.generate("Carol")
+    group_ab = NestedGroup("Group_AB", [alice, bob])
+    group_top = NestedGroup("Group_Top", [group_ab, carol])
+    expected_group_ab = key_agg([alice.pubkey, bob.pubkey]).agg_pk
+    expected_group_top = key_agg([group_ab.cache.agg_pk, carol.pubkey]).agg_pk
+    assert group_ab.cache.agg_pk == expected_group_ab
+    assert group_top.cache.agg_pk == expected_group_top
+    print("NestedGroup aggregates immediate child node keys only")
+
+def test_root_aggregates_top_level_member_node_keys():
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    carol = LeafSigner.generate("Carol")
+    dave = LeafSigner.generate("Dave")
+    group_ab = NestedGroup("Group_AB", [alice, bob])
+    group_cd = NestedGroup("Group_CD", [carol, dave])
+    _, _, agg_pk = run_nested_musig2([group_ab, group_cd], b"root semantics test")
+    expected_root = key_agg([group_ab.cache.agg_pk, group_cd.cache.agg_pk]).agg_pk
+    assert agg_pk == expected_root
+    print("Root aggregates top-level member node keys, not flattened leaves")
+
 def test_many_sessions():
     """
     Run multiple nested signing sessions to exercise even-y handling.
@@ -252,6 +276,8 @@ if __name__ == "__main__":
     test_single_member_group()
     test_wrong_message_rejected()
     test_privacy_property()
+    test_group_key_is_aggregation_of_immediate_children()
+    test_root_aggregates_top_level_member_node_keys()
     test_many_sessions()
     test_transcript_root_leaf_derives_factors_locally()
     test_transcript_nested_leaf_derives_factors_locally()

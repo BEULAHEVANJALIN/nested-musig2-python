@@ -152,17 +152,25 @@ class NestedGroup:
     An internal node in the cosigner tree represents a group of signers
     that collectively acts as a single signer at the level above.
     Members can be LeafSigners or further NestedGroups (recursive).
+
+    Tree semantics:
+    - Each member contributes exactly one immediate child node key to this node.
+    - A leaf contributes its public key directly.
+    - A nested subgroup contributes its canonical subtree key, member.cache.agg_pk.
+    - This node's canonical key is self.cache.agg_pk.
     """
     def __init__(self, name: str, members: list):
         self.name = name
         self.members = members
         if not members:
             raise ValueError("NestedGroup must contain at least one member")
-        # Collect member public keys
+        # Immediate child node keys for this parent node. Parent aggregation is
+        # always over direct children only, never over flattened descendants.
         self.member_pubkeys = [
             m.pubkey if isinstance(m, LeafSigner) else m.cache.agg_pk
             for m in members
         ]
+        # Canonical aggregate key for this subtree / node.
         self.cache: KeyAggCache = key_agg(self.member_pubkeys)
         # Nonce state (populated during Round 1)
         self.internal_agg_nonces: list[GE] | None = None
@@ -197,6 +205,7 @@ def run_nested_musig2(
     """
 
     # Step 1: top-level public keys and root key aggregation
+    # The root aggregates the immediate top-level member node keys only.
     top_pubkeys = [
         m.pubkey if isinstance(m, LeafSigner) else m.cache.agg_pk
         for m in top_level_members
@@ -244,6 +253,10 @@ def run_nested_musig2(
     ):
         """
         Traverse the tree, collecting the explicit path transcript seen by a leaf.
+
+        path_caches[i] is the parent keyset at level i.
+        path_pubkeys[i] is this signer's immediate child-node key within that
+        parent keyset.
         """
         if isinstance(member, LeafSigner):
             transcript = NestedSigningTranscript(
