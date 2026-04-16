@@ -8,33 +8,40 @@ from musig2.sign import create_session, SigningSession, aggregate_partial_sigs
 from nested_musig2.nonce_ext import sign_agg_ext
 
 @dataclass(frozen=True)
+class NestedBranchLevel:
+    """
+    One level of a leaf signer's branch through the cosigner tree.
+
+    - parent_cache: the parent node's key aggregation context at this level
+    - child_pubkey: the signer's immediate child-node key inside that parent
+    """
+    parent_cache: KeyAggCache
+    child_pubkey: GE
+
+@dataclass(frozen=True)
 class NestedBranchWitness:
     """
     Explicit description of a leaf signer's branch through the cosigner tree.
     
-    - path_caches[i]: the parent keyset at level i, from root toward the leaf
-    - path_pubkeys[i]: this signer's immediate child-node key in path_caches[i]
+    - levels[i]: the parent/child branch relationship at level i, from root to leaf
     - nested_nonce_bindings: the nested b_bar values encountered below the root
     """
-    path_caches: list[KeyAggCache]
-    path_pubkeys: list[GE]
+    levels: list[NestedBranchLevel]
     nested_nonce_bindings: list[Scalar]
 
     def __post_init__(self) -> None:
-        if not self.path_caches:
+        if not self.levels:
             raise ValueError("Nested branch witness must contain at least one key aggregation level")
-        if len(self.path_caches) != len(self.path_pubkeys):
-            raise ValueError("Each path level must have exactly one public key")
-        if len(self.nested_nonce_bindings) != len(self.path_caches) - 1:
+        if len(self.nested_nonce_bindings) != len(self.levels) - 1:
             raise ValueError("Nested nonce bindings must match the number of nested levels")
-        for cache, pk in zip(self.path_caches, self.path_pubkeys):
-            if pk.infinity:
+        for level in self.levels:
+            if level.child_pubkey.infinity:
                 raise ValueError("Branch witness path public keys cannot be infinity")
-            if pk not in cache.sorted_pks:
+            if level.child_pubkey not in level.parent_cache.sorted_pks:
                 raise ValueError("Branch witness path public key is not in its parent key set")
     
     def leaf_pubkey(self) -> GE:
-        return self.path_pubkeys[-1]
+        return self.levels[-1].child_pubkey
 
 @dataclass(frozen=True)
 class NestedSigningTranscript:
@@ -60,8 +67,12 @@ class NestedSigningTranscript:
 
     def challenge_factor(self) -> Scalar:
         c_check = self.session.c
-        for cache, pk in zip(self.branch_witness.path_caches, self.branch_witness.path_pubkeys):
-            a_i = key_agg_coef(cache.keyset_hash, pk, cache.second_key_bytes)
+        for level in self.branch_witness.levels:
+            a_i = key_agg_coef(
+                level.parent_cache.keyset_hash,
+                level.child_pubkey,
+                level.parent_cache.second_key_bytes,
+            )
             c_check = c_check * a_i
         return c_check
 
@@ -290,20 +301,22 @@ def run_nested_musig2(
     def collect_signatures(
         member,
         path_caches: list[KeyAggCache],
-        path_pubkeys: list[GE],
+        path_levels: list[NestedBranchLevel],
         nested_bindings: list[Scalar],
     ):
         """
         Traverse the tree, collecting the explicit path transcript seen by a leaf.
 
-        path_caches[i] is the parent keyset at level i.
-        path_pubkeys[i] is this signer's immediate child-node key within that
-        parent keyset.
+        path_levels[i] is the parent/child branch relationship at level i.
         """
         if isinstance(member, LeafSigner):
             branch_witness = NestedBranchWitness(
-                path_caches=path_caches,
-                path_pubkeys=path_pubkeys + [member.pubkey],
+                levels=path_levels + [
+                    NestedBranchLevel(
+                        parent_cache=path_caches[-1],
+                        child_pubkey=member.pubkey,
+                    )
+                ],
                 nested_nonce_bindings=nested_bindings,
             )
             transcript = NestedSigningTranscript(
@@ -320,14 +333,19 @@ def run_nested_musig2(
                 raise ValueError(f"Nested group {member.name} is missing round-one state")
             for m in member.members:
                 if isinstance(m, LeafSigner):
-                    collect_signatures(m, path_caches, path_pubkeys, nested_bindings)
+                    collect_signatures(m, path_caches, path_levels, nested_bindings)
                 else:
                     if m.round1_state is None:
                         raise ValueError(f"Nested group {m.name} is missing round-one state")
                     collect_signatures(
                         m,
                         path_caches + [m.cache],
-                        path_pubkeys + [m.cache.agg_pk],
+                        path_levels + [
+                            NestedBranchLevel(
+                                parent_cache=path_caches[-1],
+                                child_pubkey=m.cache.agg_pk,
+                            )
+                        ],
                         nested_bindings + [m.round1_state.b_nested],
                     )
     # Start traversal from root
@@ -340,7 +358,7 @@ def run_nested_musig2(
             collect_signatures(
                 member,
                 [root_cache, member.cache],
-                [member.cache.agg_pk],
+                [NestedBranchLevel(parent_cache=root_cache, child_pubkey=member.cache.agg_pk)],
                 [member.round1_state.b_nested],
             )
 

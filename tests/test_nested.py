@@ -7,6 +7,7 @@ from musig2.sign import create_session
 from nested_musig2.nonce_ext import sign_agg_ext
 from common.schnorr import verify_schnorr
 from nested_musig2.nested_sign import (
+    NestedBranchLevel,
     NestedBranchWitness,
     LeafSigner,
     NestedGroup,
@@ -236,8 +237,7 @@ def test_transcript_root_leaf_derives_factors_locally():
     msg = b"root leaf transcript"
     session, root_cache, _ = _make_session([alice, bob], msg)
     branch_witness = NestedBranchWitness(
-        path_caches=[root_cache],
-        path_pubkeys=[alice.pubkey],
+        levels=[NestedBranchLevel(parent_cache=root_cache, child_pubkey=alice.pubkey)],
         nested_nonce_bindings=[],
     )
     transcript = NestedSigningTranscript(
@@ -257,8 +257,10 @@ def test_transcript_nested_leaf_derives_factors_locally():
     msg = b"nested leaf transcript"
     session, root_cache, nested_bindings = _make_session([group_ab, carol], msg)
     branch_witness = NestedBranchWitness(
-        path_caches=[root_cache, group_ab.cache],
-        path_pubkeys=[group_ab.cache.agg_pk, alice.pubkey],
+        levels=[
+            NestedBranchLevel(parent_cache=root_cache, child_pubkey=group_ab.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_ab.cache, child_pubkey=alice.pubkey),
+        ],
         nested_nonce_bindings=[nested_bindings["Group_AB"]],
     )
     transcript = NestedSigningTranscript(
@@ -280,8 +282,11 @@ def test_transcript_deep_leaf_derives_factors_locally():
     msg = b"deep leaf transcript"
     session, root_cache, nested_bindings = _make_session([group_top, eve], msg)
     branch_witness = NestedBranchWitness(
-        path_caches=[root_cache, group_top.cache, group_l.cache],
-        path_pubkeys=[group_top.cache.agg_pk, group_l.cache.agg_pk, alice.pubkey],
+        levels=[
+            NestedBranchLevel(parent_cache=root_cache, child_pubkey=group_top.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_top.cache, child_pubkey=group_l.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_l.cache, child_pubkey=alice.pubkey),
+        ],
         nested_nonce_bindings=[
             nested_bindings["Group_Top"],
             nested_bindings["Group_L"],
@@ -306,8 +311,10 @@ def test_nested_partial_verifier_rejects_wrong_binding():
     msg = b"wrong nested binding"
     session, root_cache, nested_bindings = _make_session([group_ab, carol], msg)
     good_branch_witness = NestedBranchWitness(
-        path_caches=[root_cache, group_ab.cache],
-        path_pubkeys=[group_ab.cache.agg_pk, alice.pubkey],
+        levels=[
+            NestedBranchLevel(parent_cache=root_cache, child_pubkey=group_ab.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_ab.cache, child_pubkey=alice.pubkey),
+        ],
         nested_nonce_bindings=[nested_bindings["Group_AB"]],
     )
     good_transcript = NestedSigningTranscript(
@@ -316,8 +323,10 @@ def test_nested_partial_verifier_rejects_wrong_binding():
     )
     s_i = nested_sign(good_transcript, alice.nonce, alice.privkey)
     bad_branch_witness = NestedBranchWitness(
-        path_caches=[root_cache, group_ab.cache],
-        path_pubkeys=[group_ab.cache.agg_pk, alice.pubkey],
+        levels=[
+            NestedBranchLevel(parent_cache=root_cache, child_pubkey=group_ab.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_ab.cache, child_pubkey=alice.pubkey),
+        ],
         nested_nonce_bindings=[nested_bindings["Group_AB"] + Scalar(1)],
     )
     bad_transcript = NestedSigningTranscript(
@@ -343,8 +352,10 @@ def test_nested_partial_verifier_rejects_wrong_session():
     group_ab = NestedGroup("Group_AB", [alice, bob])
     good_session, good_root_cache, good_nested_bindings = _make_session([group_ab, carol], b"session one")
     good_branch_witness = NestedBranchWitness(
-        path_caches=[good_root_cache, group_ab.cache],
-        path_pubkeys=[group_ab.cache.agg_pk, alice.pubkey],
+        levels=[
+            NestedBranchLevel(parent_cache=good_root_cache, child_pubkey=group_ab.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_ab.cache, child_pubkey=alice.pubkey),
+        ],
         nested_nonce_bindings=[good_nested_bindings["Group_AB"]],
     )
     good_transcript = NestedSigningTranscript(
@@ -359,8 +370,10 @@ def test_nested_partial_verifier_rejects_wrong_session():
     group_ab_2 = NestedGroup("Group_AB", [alice_2, bob_2])
     bad_session, bad_root_cache, bad_nested_bindings = _make_session([group_ab_2, carol_2], b"session two")
     bad_branch_witness = NestedBranchWitness(
-        path_caches=[bad_root_cache, group_ab_2.cache],
-        path_pubkeys=[group_ab_2.cache.agg_pk, alice_2.pubkey],
+        levels=[
+            NestedBranchLevel(parent_cache=bad_root_cache, child_pubkey=group_ab_2.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_ab_2.cache, child_pubkey=alice_2.pubkey),
+        ],
         nested_nonce_bindings=[bad_nested_bindings["Group_AB"]],
     )
     bad_transcript = NestedSigningTranscript(
@@ -382,8 +395,11 @@ def test_transcript_rejects_wrong_path_ordering():
     session, root_cache, nested_bindings = _make_session([group_top, eve], msg)
     try:
         NestedBranchWitness(
-            path_caches=[root_cache, group_top.cache, group_l.cache],
-            path_pubkeys=[group_l.cache.agg_pk, group_top.cache.agg_pk, alice.pubkey],
+            levels=[
+                NestedBranchLevel(parent_cache=root_cache, child_pubkey=group_l.cache.agg_pk),
+                NestedBranchLevel(parent_cache=group_top.cache, child_pubkey=group_top.cache.agg_pk),
+                NestedBranchLevel(parent_cache=group_l.cache, child_pubkey=alice.pubkey),
+            ],
             nested_nonce_bindings=[
                 nested_bindings["Group_Top"],
                 nested_bindings["Group_L"],
@@ -404,8 +420,11 @@ def test_transcript_rejects_wrong_subgroup_key_in_path():
     msg = b"wrong subgroup key"
     session, root_cache, nested_bindings = _make_session([group_top, eve], msg)
     good_branch_witness = NestedBranchWitness(
-        path_caches=[root_cache, group_top.cache, group_l.cache],
-        path_pubkeys=[group_top.cache.agg_pk, group_l.cache.agg_pk, alice.pubkey],
+        levels=[
+            NestedBranchLevel(parent_cache=root_cache, child_pubkey=group_top.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_top.cache, child_pubkey=group_l.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_l.cache, child_pubkey=alice.pubkey),
+        ],
         nested_nonce_bindings=[
             nested_bindings["Group_Top"],
             nested_bindings["Group_L"],
@@ -417,8 +436,11 @@ def test_transcript_rejects_wrong_subgroup_key_in_path():
     )
     s_i = nested_sign(good_transcript, alice.nonce, alice.privkey)
     bad_branch_witness = NestedBranchWitness(
-        path_caches=[root_cache, group_top.cache, group_l.cache],
-        path_pubkeys=[group_top.cache.agg_pk, carol.pubkey, alice.pubkey],
+        levels=[
+            NestedBranchLevel(parent_cache=root_cache, child_pubkey=group_top.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_top.cache, child_pubkey=carol.pubkey),
+            NestedBranchLevel(parent_cache=group_l.cache, child_pubkey=alice.pubkey),
+        ],
         nested_nonce_bindings=[
             nested_bindings["Group_Top"],
             nested_bindings["Group_L"],
@@ -464,11 +486,10 @@ def test_run_nested_musig2_rejects_missing_deep_subgroup_binding():
     session = create_session(root_cache, top_agg_nonces, b"missing deep subgroup binding")
     group_l.round1_state = None
 
-    def collect_signatures(member, path_caches, path_pubkeys, nested_bindings):
+    def collect_signatures(member, path_caches, path_levels, nested_bindings):
         if isinstance(member, LeafSigner):
             branch_witness = NestedBranchWitness(
-                path_caches=path_caches,
-                path_pubkeys=path_pubkeys + [member.pubkey],
+                levels=path_levels + [NestedBranchLevel(parent_cache=path_caches[-1], child_pubkey=member.pubkey)],
                 nested_nonce_bindings=nested_bindings,
             )
             transcript = NestedSigningTranscript(
@@ -480,21 +501,23 @@ def test_run_nested_musig2_rejects_missing_deep_subgroup_binding():
             raise ValueError(f"Nested group {member.name} is missing round-one state")
         for child in member.members:
             if isinstance(child, LeafSigner):
-                collect_signatures(child, path_caches, path_pubkeys, nested_bindings)
+                collect_signatures(child, path_caches, path_levels, nested_bindings)
             else:
                 if child.round1_state is None:
                     raise ValueError(f"Nested group {child.name} is missing round-one state")
                 collect_signatures(
                     child,
                     path_caches + [child.cache],
-                    path_pubkeys + [child.cache.agg_pk],
+                    path_levels + [
+                        NestedBranchLevel(parent_cache=path_caches[-1], child_pubkey=child.cache.agg_pk)
+                    ],
                     nested_bindings + [child.round1_state.b_nested],
                 )
     try:
         collect_signatures(
             group_top,
             [root_cache, group_top.cache],
-            [group_top.cache.agg_pk],
+            [NestedBranchLevel(parent_cache=root_cache, child_pubkey=group_top.cache.agg_pk)],
             [group_top.round1_state.b_nested],
         )
         assert False, "Expected missing deep subgroup binding to raise ValueError"
@@ -509,8 +532,10 @@ def test_nested_sign_rejects_nonce_reuse_across_sessions():
     group_ab = NestedGroup("Group_AB", [alice, bob])
     session_one, root_cache_one, nested_bindings_one = _make_session([group_ab, carol], b"session one")
     branch_witness_one = NestedBranchWitness(
-        path_caches=[root_cache_one, group_ab.cache],
-        path_pubkeys=[group_ab.cache.agg_pk, alice.pubkey],
+        levels=[
+            NestedBranchLevel(parent_cache=root_cache_one, child_pubkey=group_ab.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_ab.cache, child_pubkey=alice.pubkey),
+        ],
         nested_nonce_bindings=[nested_bindings_one["Group_AB"]],
     )
     transcript_one = NestedSigningTranscript(
@@ -524,8 +549,10 @@ def test_nested_sign_rejects_nonce_reuse_across_sessions():
     group_ab_2 = NestedGroup("Group_AB", [alice_2, bob_2])
     session_two, root_cache_two, nested_bindings_two = _make_session([group_ab_2, carol_2], b"session two")
     branch_witness_two = NestedBranchWitness(
-        path_caches=[root_cache_two, group_ab_2.cache],
-        path_pubkeys=[group_ab_2.cache.agg_pk, alice_2.pubkey],
+        levels=[
+            NestedBranchLevel(parent_cache=root_cache_two, child_pubkey=group_ab_2.cache.agg_pk),
+            NestedBranchLevel(parent_cache=group_ab_2.cache, child_pubkey=alice_2.pubkey),
+        ],
         nested_nonce_bindings=[nested_bindings_two["Group_AB"]],
     )
     transcript_two = NestedSigningTranscript(
@@ -549,8 +576,10 @@ def test_transcript_rejects_inconsistent_path():
     session, root_cache, nested_bindings = _make_session([group_ab, carol], msg)
     try:
         NestedBranchWitness(
-            path_caches=[root_cache, group_ab.cache],
-            path_pubkeys=[alice.pubkey, alice.pubkey],
+            levels=[
+                NestedBranchLevel(parent_cache=root_cache, child_pubkey=alice.pubkey),
+                NestedBranchLevel(parent_cache=group_ab.cache, child_pubkey=alice.pubkey),
+            ],
             nested_nonce_bindings=[nested_bindings["Group_AB"]]
         )
         assert False, "Expected inconsistent transcript path to raise ValueError"
