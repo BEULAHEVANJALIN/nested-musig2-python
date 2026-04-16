@@ -12,22 +12,26 @@ class NestedBranchLevel:
     """
     One level of a leaf signer's branch through the cosigner tree.
 
-    - parent_pubkeys: the immediate parent node public keys at this level
-    - child_pubkey: the signer's immediate child-node key inside that parent
+    - child_pubkey: the signer's immediate child-node key inside this parent
+    - sibling_pubkeys: the other public keys present at this parent level
     """
-    parent_pubkeys: list[GE]
     child_pubkey: GE
+    sibling_pubkeys: list[GE]
 
     def __post_init__(self) -> None:
-        if not self.parent_pubkeys:
-            raise ValueError("Branch level parent keyset cannot be empty")
         if self.child_pubkey.infinity:
             raise ValueError("Branch witness path public keys cannot be infinity")
-        if self.child_pubkey not in self.parent_pubkeys:
-            raise ValueError("Branch witness path public key is not in its parent key set")
+        for pk in self.sibling_pubkeys:
+            if pk.infinity:
+                raise ValueError("Branch witness sibling public keys cannot be infinity")
+        if self.child_pubkey in self.sibling_pubkeys:
+            raise ValueError("Branch level child public key must not appear in sibling public keys")
+
+    def parent_pubkeys(self) -> list[GE]:
+        return self.sibling_pubkeys + [self.child_pubkey]
 
     def build_parent_cache(self) -> KeyAggCache:
-        return key_agg(self.parent_pubkeys)
+        return key_agg(self.parent_pubkeys())
 
 @dataclass(frozen=True)
 class NestedBranchWitness:
@@ -317,11 +321,12 @@ def run_nested_musig2(
         path_levels[i] is the parent/child branch relationship at level i.
         """
         if isinstance(member, LeafSigner):
+            parent_pubkeys = path_caches[-1].sorted_pks
             branch_witness = NestedBranchWitness(
                 levels=path_levels + [
                     NestedBranchLevel(
-                        parent_pubkeys=path_caches[-1].sorted_pks,
                         child_pubkey=member.pubkey,
+                        sibling_pubkeys=[pk for pk in parent_pubkeys if pk != member.pubkey],
                     )
                 ],
                 nested_nonce_bindings=nested_bindings,
@@ -344,13 +349,14 @@ def run_nested_musig2(
                 else:
                     if m.round1_state is None:
                         raise ValueError(f"Nested group {m.name} is missing round-one state")
+                    parent_pubkeys = path_caches[-1].sorted_pks
                     collect_signatures(
                         m,
                         path_caches + [m.cache],
                         path_levels + [
                             NestedBranchLevel(
-                                parent_pubkeys=path_caches[-1].sorted_pks,
                                 child_pubkey=m.cache.agg_pk,
+                                sibling_pubkeys=[pk for pk in parent_pubkeys if pk != m.cache.agg_pk],
                             )
                         ],
                         nested_bindings + [m.round1_state.b_nested],
@@ -365,7 +371,12 @@ def run_nested_musig2(
             collect_signatures(
                 member,
                 [root_cache, member.cache],
-                [NestedBranchLevel(parent_pubkeys=root_cache.sorted_pks, child_pubkey=member.cache.agg_pk)],
+                [
+                    NestedBranchLevel(
+                        child_pubkey=member.cache.agg_pk,
+                        sibling_pubkeys=[pk for pk in root_cache.sorted_pks if pk != member.cache.agg_pk],
+                    )
+                ],
                 [member.round1_state.b_nested],
             )
 
