@@ -12,11 +12,22 @@ class NestedBranchLevel:
     """
     One level of a leaf signer's branch through the cosigner tree.
 
-    - parent_cache: the parent node's key aggregation context at this level
+    - parent_pubkeys: the immediate parent node public keys at this level
     - child_pubkey: the signer's immediate child-node key inside that parent
     """
-    parent_cache: KeyAggCache
+    parent_pubkeys: list[GE]
     child_pubkey: GE
+
+    def __post_init__(self) -> None:
+        if not self.parent_pubkeys:
+            raise ValueError("Branch level parent keyset cannot be empty")
+        if self.child_pubkey.infinity:
+            raise ValueError("Branch witness path public keys cannot be infinity")
+        if self.child_pubkey not in self.parent_pubkeys:
+            raise ValueError("Branch witness path public key is not in its parent key set")
+
+    def build_parent_cache(self) -> KeyAggCache:
+        return key_agg(self.parent_pubkeys)
 
 @dataclass(frozen=True)
 class NestedBranchWitness:
@@ -34,11 +45,6 @@ class NestedBranchWitness:
             raise ValueError("Nested branch witness must contain at least one key aggregation level")
         if len(self.nested_nonce_bindings) != len(self.levels) - 1:
             raise ValueError("Nested nonce bindings must match the number of nested levels")
-        for level in self.levels:
-            if level.child_pubkey.infinity:
-                raise ValueError("Branch witness path public keys cannot be infinity")
-            if level.child_pubkey not in level.parent_cache.sorted_pks:
-                raise ValueError("Branch witness path public key is not in its parent key set")
     
     def leaf_pubkey(self) -> GE:
         return self.levels[-1].child_pubkey
@@ -68,10 +74,11 @@ class NestedSigningTranscript:
     def challenge_factor(self) -> Scalar:
         c_check = self.session.c
         for level in self.branch_witness.levels:
+            parent_cache = level.build_parent_cache()
             a_i = key_agg_coef(
-                level.parent_cache.keyset_hash,
+                parent_cache.keyset_hash,
                 level.child_pubkey,
-                level.parent_cache.second_key_bytes,
+                parent_cache.second_key_bytes,
             )
             c_check = c_check * a_i
         return c_check
@@ -313,7 +320,7 @@ def run_nested_musig2(
             branch_witness = NestedBranchWitness(
                 levels=path_levels + [
                     NestedBranchLevel(
-                        parent_cache=path_caches[-1],
+                        parent_pubkeys=path_caches[-1].sorted_pks,
                         child_pubkey=member.pubkey,
                     )
                 ],
@@ -342,7 +349,7 @@ def run_nested_musig2(
                         path_caches + [m.cache],
                         path_levels + [
                             NestedBranchLevel(
-                                parent_cache=path_caches[-1],
+                                parent_pubkeys=path_caches[-1].sorted_pks,
                                 child_pubkey=m.cache.agg_pk,
                             )
                         ],
@@ -358,7 +365,7 @@ def run_nested_musig2(
             collect_signatures(
                 member,
                 [root_cache, member.cache],
-                [NestedBranchLevel(parent_cache=root_cache, child_pubkey=member.cache.agg_pk)],
+                [NestedBranchLevel(parent_pubkeys=root_cache.sorted_pks, child_pubkey=member.cache.agg_pk)],
                 [member.round1_state.b_nested],
             )
 
