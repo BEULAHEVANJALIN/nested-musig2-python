@@ -9,6 +9,7 @@ from common.schnorr import verify_schnorr
 from nested_musig2.nested_sign import (
     LeafSigner,
     NestedGroup,
+    NestedGroupRound1State,
     NestedSigningTranscript,
     nested_sign,
     verify_nested_partial_sig,
@@ -43,9 +44,12 @@ def _make_session(top_members: list, msg: bytes):
             all_member_pub_nonces.append(generate_nonces_recursive(child))
         internal_agg = aggregate_nonces(all_member_pub_nonces)
         external_nonces, b_nested = sign_agg_ext(internal_agg, member.cache.agg_pk)
-        member.internal_agg_nonces = internal_agg
-        member.external_nonces = external_nonces
-        member.b_nested = b_nested
+        member.round1_state = NestedGroupRound1State(
+            cache=member.cache,
+            internal_agg_nonces=internal_agg,
+            external_nonces=external_nonces,
+            b_nested=b_nested,
+        )
         nested_bindings[member.name] = b_nested
         return external_nonces
 
@@ -192,6 +196,18 @@ def test_root_aggregates_top_level_member_node_keys():
     expected_root = key_agg([group_ab.cache.agg_pk, group_cd.cache.agg_pk]).agg_pk
     assert agg_pk == expected_root
     print("Root aggregates top-level member node keys, not flattened leaves")
+
+def test_nested_group_round1_state_is_populated_consistently():
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    carol = LeafSigner.generate("Carol")
+    group_ab = NestedGroup("Group_AB", [alice, bob])
+    _make_session([group_ab, carol], b"round-one state test")
+    assert group_ab.round1_state is not None
+    assert len(group_ab.round1_state.internal_agg_nonces) == 2
+    assert len(group_ab.round1_state.external_nonces) == 2
+    assert group_ab.round1_state.cache.agg_pk == group_ab.cache.agg_pk
+    print("Nested group round-one state is populated consistently")
 
 def test_many_sessions():
     """
@@ -406,9 +422,12 @@ def test_run_nested_musig2_rejects_missing_deep_subgroup_binding():
             all_member_pub_nonces.append(generate_nonces_recursive(child))
         internal_agg = aggregate_nonces(all_member_pub_nonces)
         external_nonces, b_nested = sign_agg_ext(internal_agg, member.cache.agg_pk)
-        member.internal_agg_nonces = internal_agg
-        member.external_nonces = external_nonces
-        member.b_nested = b_nested
+        member.round1_state = NestedGroupRound1State(
+            cache=member.cache,
+            internal_agg_nonces=internal_agg,
+            external_nonces=external_nonces,
+            b_nested=b_nested,
+        )
         return external_nonces
     top_members = [group_top, eve]
     top_pubkeys = [m.pubkey if isinstance(m, LeafSigner) else m.cache.agg_pk for m in top_members]
@@ -416,7 +435,7 @@ def test_run_nested_musig2_rejects_missing_deep_subgroup_binding():
     top_level_pub_nonces = [generate_nonces_recursive(member) for member in top_members]
     top_agg_nonces = aggregate_nonces(top_level_pub_nonces)
     session = create_session(root_cache, top_agg_nonces, b"missing deep subgroup binding")
-    group_l.b_nested = None
+    group_l.round1_state = None
 
     def collect_signatures(member, path_caches, path_pubkeys, nested_bindings):
         if isinstance(member, LeafSigner):
@@ -427,24 +446,31 @@ def test_run_nested_musig2_rejects_missing_deep_subgroup_binding():
                 nested_nonce_bindings=nested_bindings,
             )
             return nested_sign(transcript, member.nonce, member.privkey)
-        if member.b_nested is None:
-            raise ValueError(f"Nested group {member.name} is missing its nested nonce binding")
+        if member.round1_state is None:
+            raise ValueError(f"Nested group {member.name} is missing round-one state")
         for child in member.members:
             if isinstance(child, LeafSigner):
                 collect_signatures(child, path_caches, path_pubkeys, nested_bindings)
             else:
+                if child.round1_state is None:
+                    raise ValueError(f"Nested group {child.name} is missing round-one state")
                 collect_signatures(
                     child,
                     path_caches + [child.cache],
                     path_pubkeys + [child.cache.agg_pk],
-                    nested_bindings + [child.b_nested],
+                    nested_bindings + [child.round1_state.b_nested],
                 )
     try:
-        collect_signatures(group_top, [root_cache, group_top.cache], [group_top.cache.agg_pk], [group_top.b_nested])
+        collect_signatures(
+            group_top,
+            [root_cache, group_top.cache],
+            [group_top.cache.agg_pk],
+            [group_top.round1_state.b_nested],
+        )
         assert False, "Expected missing deep subgroup binding to raise ValueError"
     except ValueError as e:
-        assert "missing its nested nonce binding" in str(e)
-    print("Nested signing rejects missing deep subgroup bindings")
+        assert "missing round-one state" in str(e)
+    print("Nested signing rejects missing deep subgroup round-one state")
 
 def test_nested_sign_rejects_nonce_reuse_across_sessions():
     alice = LeafSigner.generate("Alice")
@@ -506,6 +532,7 @@ if __name__ == "__main__":
     test_privacy_property()
     test_group_key_is_aggregation_of_immediate_children()
     test_root_aggregates_top_level_member_node_keys()
+    test_nested_group_round1_state_is_populated_consistently()
     test_many_sessions()
     test_transcript_root_leaf_derives_factors_locally()
     test_transcript_nested_leaf_derives_factors_locally()

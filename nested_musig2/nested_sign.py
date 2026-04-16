@@ -55,6 +55,23 @@ class NestedSigningTranscript:
     def leaf_pubkey(self) -> GE:
         return self.path_pubkeys[-1]
 
+@dataclass(frozen=True)
+class NestedGroupRound1State:
+    """
+    Public round-one output produced by a nested subgroup.
+
+    This bundles the subgroup state that is computed bottom-up in round one and
+    then exposed to the level above:
+    - cache: the canonical aggregate-key cache for this subgroup
+    - internal_agg_nonces: the subgroup's internal aggregate nonces
+    - external_nonces: the nonce tuple this subgroup exposes upward
+    - b_nested: the subgroup's nested nonce-binding coefficient
+    """
+    cache: KeyAggCache
+    internal_agg_nonces: list[GE]
+    external_nonces: list[GE]
+    b_nested: Scalar
+
 def nested_sign(
     transcript: NestedSigningTranscript,
     signer_nonce: SignerNonce,
@@ -180,10 +197,8 @@ class NestedGroup:
         ]
         # Canonical aggregate key for this subtree / node.
         self.cache: KeyAggCache = key_agg(self.member_pubkeys)
-        # Nonce state (populated during Round 1)
-        self.internal_agg_nonces: list[GE] | None = None
-        self.external_nonces: list[GE] | None = None
-        self.b_nested: Scalar | None = None
+        # Public round-one state (populated during Round 1).
+        self.round1_state: NestedGroupRound1State | None = None
 
 
 # Full protocol orchestration
@@ -232,13 +247,19 @@ def run_nested_musig2(
                 pub_nonces = generate_nonces_recursive(m)
                 all_member_pub_nonces.append(pub_nonces)
             # SignAgg: aggregate member nonces internally
-            member.internal_agg_nonces = aggregate_nonces(all_member_pub_nonces)
+            internal_agg_nonces = aggregate_nonces(all_member_pub_nonces)
             # SignAggExt: transform to external nonces
-            member.external_nonces, member.b_nested = sign_agg_ext(
-                member.internal_agg_nonces,
+            external_nonces, b_nested = sign_agg_ext(
+                internal_agg_nonces,
                 member.cache.agg_pk,
             )
-            return member.external_nonces
+            member.round1_state = NestedGroupRound1State(
+                cache=member.cache,
+                internal_agg_nonces=internal_agg_nonces,
+                external_nonces=external_nonces,
+                b_nested=b_nested,
+            )
+            return member.round1_state.external_nonces
     top_level_pub_nonces = []
     for member in top_level_members:
         pub_nonces = generate_nonces_recursive(member)
@@ -279,26 +300,33 @@ def run_nested_musig2(
             partial_sigs.append(s_i)
         elif isinstance(member, NestedGroup):
             # Recurse into members with this group's cache
-            if member.b_nested is None:
-                raise ValueError(f"Nested group {member.name} is missing its nested nonce binding")
+            if member.round1_state is None:
+                raise ValueError(f"Nested group {member.name} is missing round-one state")
             for m in member.members:
                 if isinstance(m, LeafSigner):
                     collect_signatures(m, path_caches, path_pubkeys, nested_bindings)
                 else:
-                    if m.b_nested is None:
-                        raise ValueError(f"Nested group {m.name} is missing its nested nonce binding")
+                    if m.round1_state is None:
+                        raise ValueError(f"Nested group {m.name} is missing round-one state")
                     collect_signatures(
                         m,
                         path_caches + [m.cache],
                         path_pubkeys + [m.cache.agg_pk],
-                        nested_bindings + [m.b_nested],
+                        nested_bindings + [m.round1_state.b_nested],
                     )
     # Start traversal from root
     for member in top_level_members:
         if isinstance(member, LeafSigner):
             collect_signatures(member, [root_cache], [], [])
         else:
-            collect_signatures(member, [root_cache, member.cache], [member.cache.agg_pk], [member.b_nested])
+            if member.round1_state is None:
+                raise ValueError(f"Nested group {member.name} is missing round-one state")
+            collect_signatures(
+                member,
+                [root_cache, member.cache],
+                [member.cache.agg_pk],
+                [member.round1_state.b_nested],
+            )
 
     #  Step 5: Aggregate 
     R, s = aggregate_partial_sigs(session, partial_sigs)
