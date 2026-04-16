@@ -19,7 +19,7 @@ that all signers need for their partial signatures.
 from secp256k1lab.secp256k1 import GE, Scalar, G
 from dataclasses import dataclass
 
-from common.hashing import hash_nonce, hash_sig, hash_session_id
+from common.hashing import hash_nonce, hash_sig
 from musig2.keyagg import KeyAggCache, key_agg_coef
 from musig2.nonce import SignerNonce, NU, validate_nonce_points
 
@@ -33,7 +33,6 @@ class SigningSession:
     Fields:
         cache:      KeyAggCache from key aggregation
         agg_nonces: [R_1, R_2] from nonce aggregation
-        session_id: Deterministic identifier for this signing session
         b:          Nonce binding coefficient
         R:          Effective aggregate nonce
         c:          Signature challenge
@@ -43,7 +42,6 @@ class SigningSession:
     """
     cache: KeyAggCache
     agg_nonces: list[GE]
-    session_id: bytes
     b: Scalar
     R: GE
     c: Scalar
@@ -75,7 +73,6 @@ def create_session(
     # b = H_non(X̃, R_1 || R_2, m)
     agg_pk_ser = cache.agg_pk.to_bytes_compressed()
     nonces_ser = b"".join(R.to_bytes_compressed() for R in agg_nonces)
-    session_id = hash_session_id(agg_pk_ser, nonces_ser, msg)
     b = hash_nonce(agg_pk_ser, nonces_ser, msg)
     # Step 2: Effective aggregate nonce
     R = GE()  # infinity
@@ -98,7 +95,6 @@ def create_session(
     return SigningSession(
         cache=cache,
         agg_nonces=agg_nonces,
-        session_id=session_id,
         b=b,
         R=R,
         c=c,
@@ -127,7 +123,7 @@ def sign(
     if signer_pubkey not in session.cache.sorted_pks:
         raise ValueError("Signer public key is not present in the aggregate key set")
     # Get the secret nonces (one-time use!)
-    sec_nonces = signer_nonce.get_sec_nonces(session.session_id)
+    sec_nonces = signer_nonce.get_sec_nonces()
     a_i = key_agg_coef(
         session.cache.keyset_hash,
         signer_pubkey,

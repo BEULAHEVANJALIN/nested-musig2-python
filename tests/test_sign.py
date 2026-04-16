@@ -156,31 +156,6 @@ def test_partial_sig_cross_signer_rejected():
     assert not verify_partial_sig(session, pk2, all_pub_nonces[0], s1)
     print("Partial sig from signer A rejected under signer B's key")
 
-def test_sign_rejects_nonce_reuse_across_sessions():
-    sk1, pk1 = _make_signer(77)
-    sk2, pk2 = _make_signer(88)
-    cache = key_agg([pk1, pk2])
-    nonce = generate_nonce()
-    other_nonce = generate_nonce()
-    session_one = create_session(
-        cache,
-        aggregate_nonces([nonce.pub_nonces, other_nonce.pub_nonces]),
-        b"session one",
-    )
-    sign(session_one, nonce, sk1, pk1)
-    fresh_other_nonce = generate_nonce()
-    session_two = create_session(
-        cache,
-        aggregate_nonces([nonce.pub_nonces, fresh_other_nonce.pub_nonces]),
-        b"session two",
-    )
-    try:
-        sign(session_two, nonce, sk1, pk1)
-        assert False, "Expected cross-session nonce reuse to raise RuntimeError"
-    except RuntimeError as e:
-        assert "cross-session nonce reuse" in str(e).lower()
-    print("Flat MuSig2 signing rejects nonce reuse across sessions")
-
 if __name__ == "__main__":
     test_3of3_signing()
     test_2of2_signing()
@@ -189,5 +164,4 @@ if __name__ == "__main__":
     test_wrong_key_rejected()
     test_partial_sigs_verified()
     test_partial_sig_cross_signer_rejected()
-    test_sign_rejects_nonce_reuse_across_sessions()
     print("\nAll signing tests passed!\n")

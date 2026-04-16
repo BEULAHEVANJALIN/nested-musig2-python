@@ -25,8 +25,6 @@ class NestedSigningTranscript:
     nested_nonce_bindings: list[Scalar]
 
     def __post_init__(self) -> None:
-        if not self.session.session_id:
-            raise ValueError("Nested transcript requires a non-empty session identifier")
         if not self.path_caches:
             raise ValueError("Nested transcript must contain at least one key aggregation level")
         if len(self.path_caches) != len(self.path_pubkeys):
@@ -96,7 +94,7 @@ def nested_sign(
     b_check = transcript.nonce_factor()
     c_check = transcript.challenge_factor()
     # Consume the nonce (single-use enforcement)
-    sec_nonces = signer_nonce.get_sec_nonces(session.session_id)
+    sec_nonces = signer_nonce.get_sec_nonces()
 
     # Key part: č · x_i, negated if aggregate key had odd y
     key_part = c_check * signer_privkey

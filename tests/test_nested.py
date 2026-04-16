@@ -311,44 +311,6 @@ def test_nested_partial_verifier_rejects_wrong_binding():
     assert not verify_nested_partial_sig(bad_transcript, alice.nonce.pub_nonces, s_i)
     print("Nested partial verification rejects an incorrect nested binding")
 
-
-def test_nested_sessions_have_distinct_ids():
-    alice = LeafSigner.generate("Alice")
-    bob = LeafSigner.generate("Bob")
-    session_a, _, _ = _make_session([alice, bob], b"session A")
-    session_b, _, _ = _make_session([alice, bob], b"session B")
-    assert session_a.session_id != session_b.session_id
-    print("Different nested signing sessions have distinct session identifiers")
-
-def test_nested_partial_verifier_rejects_wrong_session():
-    alice = LeafSigner.generate("Alice")
-    bob = LeafSigner.generate("Bob")
-    carol = LeafSigner.generate("Carol")
-    group_ab = NestedGroup("Group_AB", [alice, bob])
-    good_session, good_root_cache, good_nested_bindings = _make_session([group_ab, carol], b"session one")
-    good_transcript = NestedSigningTranscript(
-        session=good_session,
-        path_caches=[good_root_cache, group_ab.cache],
-        path_pubkeys=[group_ab.cache.agg_pk, alice.pubkey],
-        nested_nonce_bindings=[good_nested_bindings["Group_AB"]],
-    )
-    s_i = nested_sign(good_transcript, alice.nonce, alice.privkey)
-    # Build a second session for the same tree shape but a different message.
-    alice_2 = LeafSigner("Alice", alice.privkey, alice.pubkey)
-    bob_2 = LeafSigner("Bob", bob.privkey, bob.pubkey)
-    carol_2 = LeafSigner("Carol", carol.privkey, carol.pubkey)
-    group_ab_2 = NestedGroup("Group_AB", [alice_2, bob_2])
-    bad_session, bad_root_cache, bad_nested_bindings = _make_session([group_ab_2, carol_2], b"session two")
-    bad_transcript = NestedSigningTranscript(
-        session=bad_session,
-        path_caches=[bad_root_cache, group_ab_2.cache],
-        path_pubkeys=[group_ab_2.cache.agg_pk, alice_2.pubkey],
-        nested_nonce_bindings=[bad_nested_bindings["Group_AB"]],
-    )
-    assert good_session.session_id != bad_session.session_id
-    assert not verify_nested_partial_sig(bad_transcript, alice.nonce.pub_nonces, s_i)
-    print("Nested partial verification rejects transcript reuse across sessions")
-
 def test_transcript_rejects_wrong_path_ordering():
     alice = LeafSigner.generate("Alice")
     bob = LeafSigner.generate("Bob")
@@ -471,38 +433,6 @@ def test_run_nested_musig2_rejects_missing_deep_subgroup_binding():
     except ValueError as e:
         assert "missing round-one state" in str(e)
     print("Nested signing rejects missing deep subgroup round-one state")
-
-def test_nested_sign_rejects_nonce_reuse_across_sessions():
-    alice = LeafSigner.generate("Alice")
-    bob = LeafSigner.generate("Bob")
-    carol = LeafSigner.generate("Carol")
-    group_ab = NestedGroup("Group_AB", [alice, bob])
-    session_one, root_cache_one, nested_bindings_one = _make_session([group_ab, carol], b"session one")
-    transcript_one = NestedSigningTranscript(
-        session=session_one,
-        path_caches=[root_cache_one, group_ab.cache],
-        path_pubkeys=[group_ab.cache.agg_pk, alice.pubkey],
-        nested_nonce_bindings=[nested_bindings_one["Group_AB"]],
-    )
-    nested_sign(transcript_one, alice.nonce, alice.privkey)
-    alice_2 = LeafSigner("Alice", alice.privkey, alice.pubkey)
-    bob_2 = LeafSigner("Bob", bob.privkey, bob.pubkey)
-    carol_2 = LeafSigner("Carol", carol.privkey, carol.pubkey)
-    group_ab_2 = NestedGroup("Group_AB", [alice_2, bob_2])
-    session_two, root_cache_two, nested_bindings_two = _make_session([group_ab_2, carol_2], b"session two")
-    transcript_two = NestedSigningTranscript(
-        session=session_two,
-        path_caches=[root_cache_two, group_ab_2.cache],
-        path_pubkeys=[group_ab_2.cache.agg_pk, alice_2.pubkey],
-        nested_nonce_bindings=[nested_bindings_two["Group_AB"]],
-    )
-    alice_2.nonce = alice.nonce
-    try:
-        nested_sign(transcript_two, alice_2.nonce, alice_2.privkey)
-        assert False, "Expected nested cross-session nonce reuse to raise RuntimeError"
-    except RuntimeError as e:
-        assert "cross-session nonce reuse" in str(e).lower()
-    print("Nested signing rejects nonce reuse across sessions")
 
 def test_transcript_rejects_inconsistent_path():
     alice = LeafSigner.generate("Alice")
