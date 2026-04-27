@@ -126,7 +126,7 @@ for pk in sorted_pks:
 
 These values are reused later during signing to derive each signer's key aggregation coefficient from the same canonical keyset.
 
-**Why the coefficients matter** The aggregate key is not just a plain sum of public keys. The coefficients $a_i$ bind each signer’s contribution to the full keyset at that level. This prevents rogue-key attacks and ensures that the aggregate key depends on the entire participant set.
+**Why the coefficients matter** The aggregate key is not just a plain sum of public keys. The coefficients $a_i$ bind each signer's contribution to the full keyset at that level. This prevents rogue-key attacks and ensures that the aggregate key depends on the entire participant set.
 
 **Nested interpretation:** In the nested setting, each node contributes exactly one public key upward:
 - a `LeafSigner` contributes its own public key
@@ -134,7 +134,7 @@ These values are reused later during signing to derive each signer's key aggrega
 
 So, if $Group_{AB} = {A, B}$ and $Group_{CD} = {C, D}$, then the root aggregates $\tilde{X}\_{AB}$ and $\tilde{X}\_{CD}$, respectively, rather than the four leaf keys directly at that level.
 
-This matches the implementation’s tree semantics:
+This matches the implementation's tree semantics:
 - parents aggregate immediate child node keys only
 - descendants are not flattened into the parent keyset
 
@@ -205,7 +205,7 @@ for j in range(NU):
     agg_nonces.append(R_j)
 ```
 
-**Nonce state in the implementation:** The implementation stores each signer’s nonce data in a `SignerNonce` object.
+**Nonce state in the implementation:** The implementation stores each signer's nonce data in a `SignerNonce` object.
 
 It contains:
 
@@ -217,7 +217,7 @@ The secret nonces are consumed once during signing. After use, the object marks 
 
 **Why nonce reuse is dangerous** A signer must never reuse the same secret nonce scalars in two different signing equations.
 
-If the same nonce is used with different challenges, an attacker may be able to solve for the signer’s private key. The implementation therefore makes `SignerNonce.get_sec_nonces()` callable only once.
+If the same nonce is used with different challenges, an attacker may be able to solve for the signer's private key. The implementation therefore makes `SignerNonce.get_sec_nonces()` callable only once.
 
 **Nested interpretation:** 
 
@@ -318,7 +318,7 @@ in the same way during nonce aggregation.
 **Code:** `NestedGroupRound1State` in `nested_musig2/nested_sign.py`
 
 It contains:
-- `cache`: the subgroup’s key aggregation cache
+- `cache`: the subgroup's key aggregation cache
 - `internal_agg_nonces`: $(R'_1, \ldots, R'_\nu)$
 - `external_nonces`: $(R_1, \ldots, R_\nu)$
 - `b_nested`: $\bar{b}$
@@ -450,7 +450,7 @@ This transcript tells a leaf signer:
 For one leaf signer, the transcript contains:
 - `session`: the root `SigningSession`
 - `path_caches`: the parent keyset at each level, from root to leaf
-- `path_pubkeys`: the signer’s immediate child-node key inside each parent keyset
+- `path_pubkeys`: the signer's immediate child-node key inside each parent keyset
 - `nested_nonce_bindings`: the nested nonce bindings encountered below the root
 
 **Code:** `NestedSigningTranscript` in `nested_musig2/nested_sign.py`
@@ -472,7 +472,7 @@ class NestedSigningTranscript:
 
 **Code:** `NestedSigningTranscript.__post_init__()` in `nested_musig2/nested_sign.py`
 
-These checks ensure that the signer’s path is structurally consistent before any partial signature is computed.
+These checks ensure that the signer's path is structurally consistent before any partial signature is computed.
 
 **Derived path values:** From this transcript, the signer derives two path-dependent values.
 1. Effective nonce binding
@@ -498,7 +498,7 @@ $$
 \check{c} := c \cdot \prod_{\ell} a_{i,\ell}
 $$
 
-where $a_{i,\ell}$ is the coefficient of the signer’s child-node key inside the parent keyset at level $\ell$.
+where $a_{i,\ell}$ is the coefficient of the signer's child-node key inside the parent keyset at level $\ell$.
 
 **Code:** `NestedSigningTranscript.challenge_factor()`
 ```python
@@ -519,12 +519,12 @@ That is what turns the ordinary MuSig2 signing equation into the nested signing 
 - root contains `Group_AB` and `Carol`
 - `Group_AB` contains `Alice` and `Bob`
 
-Then Alice’s transcript contains:
+Then Alice's transcript contains:
 - the root session
 - the root keyset: $\tilde{X}_{AB}, X_C$
-- Alice’s child key in that root keyset: $\tilde{X}_{AB}$
+- Alice's child key in that root keyset: $\tilde{X}_{AB}$
 - the subgroup keyset: $[X_A, X_B]$
-- Alice’s child key in that subgroup keyset: $X_A$
+- Alice's child key in that subgroup keyset: $X_A$
 - the nested binding $\bar{b}_{AB}$
 
 From this, Alice derives 
@@ -544,7 +544,7 @@ Those are the values Alice uses in Round 2.
 **How the implementation builds transcripts** During `run_nested_musig2(...)`, the code traverses the tree recursively. As it descends:
 - it appends the current parent cache to `path_caches`
 - it appends the child-node key for that level to `path_pubkeys`
-- it appends the subgroup’s `b_nested` value to `nested_nonce_bindings`
+- it appends the subgroup's `b_nested` value to `nested_nonce_bindings`
 
 When it reaches a leaf, it constructs a `NestedSigningTranscript` and signs immediately.
 
@@ -556,7 +556,7 @@ When it reaches a leaf, it constructs a `NestedSigningTranscript` and signs imme
 - an effective nonce binding $\check{b}$
 - an effective challenge $\check{c}$
 
-These values are then used to compute the leaf’s partial signature.
+These values are then used to compute the leaf's partial signature.
 
 ---
 
@@ -569,8 +569,8 @@ Once a leaf signer has its validated transcript, it computes a partial signature
 This is the nested analogue of the ordinary MuSig2 partial signing step.
 
 Let:
-- $(r_{i,1}, \ldots, r_{i,\nu})$ be the leaf signer’s secret nonce scalars
-- $x_i$ be the leaf signer’s private key
+- $(r_{i,1}, \ldots, r_{i,\nu})$ be the leaf signer's secret nonce scalars
+- $x_i$ be the leaf signer's private key
 - $\check{b}$ be the effective nonce binding from the transcript
 - $\check{c}$ be the effective challenge from the transcript
 
@@ -638,9 +638,9 @@ In Nested MuSig2, a leaf signer instead uses:
 - $\check{b}$, which includes every nested binding on its path
 - $\check{c}$, which includes every key aggregation coefficient on its path
 
-So the leaf’s signature share is bound not only to the top-level session, but also to the exact subgroup structure it belongs to.
+So the leaf's signature share is bound not only to the top-level session, but also to the exact subgroup structure it belongs to.
 
-**Nonce consumption:** The leaf signer’s secret nonce object is single-use.
+**Nonce consumption:** The leaf signer's secret nonce object is single-use.
 
 When `nested_sign(...)` calls:
 ```python
@@ -657,13 +657,13 @@ This prevents accidental nonce reuse.
 
 ## Algorithm 8: Nested Partial Signature Verification
 
-Before aggregating leaf partial signatures into the final signature, the implementation verifies each nested partial signature against the signer’s explicit transcript and public nonce commitments.
+Before aggregating leaf partial signatures into the final signature, the implementation verifies each nested partial signature against the signer's explicit transcript and public nonce commitments.
 
 This is the nested analogue of ordinary MuSig2 partial signature verification.
 
 **Inputs:** For one leaf signer, verification uses:
 - the validated `NestedSigningTranscript`
-- the signer’s public nonce tuple $(R_{i,1}, \ldots, R_{i,\nu})$
+- the signer's public nonce tuple $(R_{i,1}, \ldots, R_{i,\nu})$
 - the claimed partial signature $s_i$
 
 From the transcript, the verifier derives:
@@ -671,7 +671,7 @@ From the transcript, the verifier derives:
 - the effective nonce binding $\check{b}$
 - the effective challenge $\check{c}$
 
-First compute the signer’s effective public nonce:
+First compute the signer's effective public nonce:
 
 $$
 \hat{R}_i := \sum_{j=1}^{\nu} \check{b}^{j-1} R_{i,j}
@@ -685,7 +685,7 @@ $$
 
 If the session indicates that the aggregate nonce was negated, negate $\hat{R}_i$.
 
-Then compute the signer’s effective key term:
+Then compute the signer's effective key term:
 
 $$
 \check{c} \cdot X_i
@@ -726,7 +726,7 @@ return lhs == rhs
 ```
 
 Before checking the equation, the implementation validates:
-- the signer’s public nonce tuple has length $\nu$
+- the signer's public nonce tuple has length $\nu$
 - no nonce point is the point at infinity
 - the leaf public key is not infinity
 
@@ -735,8 +735,8 @@ If any of these checks fail, verification returns `False`.
 **Why this matters** This step prevents malformed or inconsistent leaf signature shares from being aggregated into the final signature.
 
 In particular, verification is sensitive to:
-- the signer’s public nonce tuple
-- the signer’s exact path through the tree
+- the signer's public nonce tuple
+- the signer's exact path through the tree
 - the nested nonce bindings on that path
 - the key aggregation coefficients on that path
 
@@ -796,7 +796,7 @@ return session.R, s
 ```
 
 **Why this works** Each leaf partial signature already includes:
-- the signer’s private-key contribution
+- the signer's private-key contribution
 - the nonce contribution
 - the path-dependent nested factors
 - the BIP 340 sign adjustments
@@ -830,7 +830,7 @@ $$
 with the standard BIP 340 x-only/even-y conventions.
 
 In the implementation, the nested signing flow is tested against:
-- the project’s Schnorr verifier
+- the project's Schnorr verifier
 - the library BIP 340 verifier
 
 This confirms that the final output is a standard Schnorr signature, not a special nested-only format.
