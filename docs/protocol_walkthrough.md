@@ -19,25 +19,26 @@
 | $b$ | Nonce binding coefficient (top level) |
 | $\bar{b}$ | Nonce binding coefficient (nested level, no message) |
 | $\check{b}$ | Product of all nonce bindings along a path: $\prod_{\ell} b_\ell$ |
-| $c$ | Signature challenge: $H_{\text{sig}}(\tilde{X}, R, m)$ |
-| $\check{c}$ | Effective challenge: $c \cdot \prod_{\ell} a_{1,\ell}$ |
+| $c$ | Signature challenge: $H_{\text{sig}}(R \| \tilde{X} \| m)$ |
+| $\check{c}$ | Effective challenge: $c \cdot \prod_{\ell} a_{i,\ell}$ |
 | $s_i$ | Partial signature from signer $i$ |
 | $\sigma = (R, s)$ | Final Schnorr signature |
 | $\nu$ | Number of nonces per signer per session ($=2$ in BIP 327) |
 | $\Lambda$ | Nesting depth ($\Lambda = 1$ for standard MuSig2) |
-| $\mathcal{L}$ | Multiset of public keys at a given level |
+| $\mathcal{L}$ | Canonically sorted list of public keys at a given level |
+| $\mathbb{Z}_n^*$ | The set of nonzero scalars modulo $n$ |
 
 ---
 
 ## Hash Functions
-Four tagged hash functions, each with a distinct domain separation tag:
+The implementation uses five tagged hash functions, each with a distinct domain separation tag:
 
 | Function | Tag | Inputs | Output |
 |----------|-----|--------|--------|
 | $H_{\text{agg-list}}$ | `"KeyAgg list"` | $X_1 \| X_2 \| \cdots \| X_n$ | 32-byte hash $L$ |
 | $H_{\text{agg-coef}}$ | `"KeyAgg coefficient"` | $L \| X_i$ | Scalar $a_i \bmod n$ |
 | $H_{\text{non}}$ | `"MuSig/noncecoef"` | $\tilde{X} \| R_1 \| R_2 \| m$ | Scalar $b \bmod n$ |
-| $H_{\overline{\text{non}}}$ | `"MuSig/nested-noncecoef"` | $X_{\text{group}} \| R'_1 \| R'_2$ | Scalar $\bar{b} \bmod n$ |
+| $H_{\overline{\text{non}}}$ | `"MuSig/nested-noncecoef"` | $\tilde{X}_{\text{group}} \| R'_1 \| R'_2$ | Scalar $\bar{b} \bmod n$ |
 | $H_{\text{sig}}$ | `"BIP0340/challenge"` | $R \| \tilde{X} \| m$ | Scalar $c \bmod n$ |
 
 **Code**: `common/hashing.py`
@@ -55,7 +56,7 @@ Key Points:
 ## Algorithm 1: KeyGen
 
 > **KeyGen():**
-> - $x \stackrel{\\$}{\leftarrow} \mathbb{Z}_n$ (sampled uniformly at random from a CSPRNG; used as the private key)
+> - $x \stackrel{\$}{\leftarrow} \mathbb{Z}_n^*$ (sampled uniformly at random from a CSPRNG; used as the private key)
 > - Compute $X := x \cdot G$ (public key, a point on the elliptic curve)
 > - return $(x, X)$
 
@@ -68,7 +69,7 @@ while True:
         pk = int(sk) * G
         return LeafSigner(name, sk, pk)
 ```
-**Why it exists:** Every signer needs a key pair. The private key $x$ must be uniformly random over $\\{1, \ldots, n-1\\}$. The public key $X$ is published.
+**Why it exists:** Every signer needs a key pair. The private key $x$ must be sampled uniformly from $\mathbb{Z}_n^*$. The public key $X$ is published.
 
 **Security notes**
 - Private Key $x$ must remain secret and should never be logged, transmitted insecurely, or reused across protocols.
@@ -125,7 +126,7 @@ for pk in sorted_pks:
 
 These values are reused later during signing to derive each signer's key aggregation coefficient from the same canonical keyset.
 
-**Why the coefficients matter?** The aggregate key is not just a plain sum of public keys. The coefficients $a_i$ bind each signer’s contribution to the full keyset at that level. This prevents rogue-key attacks and ensures that the aggregate key depends on the entire participant set.
+**Why the coefficients matter** The aggregate key is not just a plain sum of public keys. The coefficients $a_i$ bind each signer’s contribution to the full keyset at that level. This prevents rogue-key attacks and ensures that the aggregate key depends on the entire participant set.
 
 **Nested interpretation:** In the nested setting, each node contributes exactly one public key upward:
 - a `LeafSigner` contributes its own public key
@@ -214,7 +215,7 @@ It contains:
 
 The secret nonces are consumed once during signing. After use, the object marks them as used and zeroes the stored secret nonce list.
 
-**Why nonce reuse is dangerous?** A signer must never reuse the same secret nonce scalars in two different signing equations.
+**Why nonce reuse is dangerous** A signer must never reuse the same secret nonce scalars in two different signing equations.
 
 If the same nonce is used with different challenges, an attacker may be able to solve for the signer’s private key. The implementation therefore makes `SignerNonce.get_sec_nonces()` callable only once.
 
@@ -263,7 +264,7 @@ external_nonces, b_nested = sign_agg_ext(
 
 **Output of Round 1**
 
-At the end of Round 1, the root has an aggregate nonce tuple $(R_1, \ldots, R_\nu)$. For this implementation: $(R_1, R_2)$
+At the end of Round 1, the root has an aggregate nonce tuple $(R_1, \ldots, R_\nu)$. In this implementation, this is concretely $(R_1, R_2)$.
 
 This tuple is then used in the next step to create the signing session.
 
@@ -271,7 +272,7 @@ This tuple is then used in the next step to create the signing session.
 
 ## Algorithm 4: Nested Extension / SignAggExt
 
-`SignAggExt` is the nested-specific step that lets a subgroup expose a nonce tuple upward as if the whole subgroup were one ordinary MuSig2 signer. Inside a subgroup, child nonces are first aggregated normally. This gives an internal aggregate nonce tuple $(R'\_1, \ldots, R'\_\nu)$. Then the subgroup computes a nested nonce binding coefficient $\bar{b} := H_{\overline{\text{non}}}(\tilde{X}_{\text{group}} \| R'\_1 \| \cdots \| R'\_\nu)$. Finally, each internal aggregate nonce is transformed into an external nonce:
+`SignAggExt` is the nested-specific step that lets a subgroup expose a nonce tuple upward as if the whole subgroup were one ordinary MuSig2 signer. Inside a subgroup, child nonces are first aggregated normally. This gives an internal aggregate nonce tuple $(R'\_1, \ldots, R'\_\nu)$. Here $\tilde{X}_{\text{group}}$ denotes the aggregate public key of that subgroup. Then the subgroup computes a nested nonce binding coefficient $\bar{b} := H_{\overline{\text{non}}}(\tilde{X}_{\text{group}} \| R'\_1 \| \cdots \| R'\_\nu)$. Finally, each internal aggregate nonce is transformed into an external nonce:
 
 $$
 R\_j := \bar{b}^{j-1} \cdot R'\_j
@@ -304,7 +305,7 @@ for j in range(NU):
 
 return external_nonces, b_nested
 ```
-**Why this exists?** Without `SignAggExt`, a nested subgroup would not expose the right nonce structure to the parent level. The parent expects every participant to provide a nonce tuple $(R_1, \ldots, R_\nu)$.
+**Why this exists** Without `SignAggExt`, a nested subgroup would not expose the right nonce structure to the parent level. The parent expects every participant to provide a nonce tuple $(R_1, \ldots, R_\nu)$.
 
 A nested subgroup must therefore transform its internal aggregate nonce tuple into an external tuple of the same shape.
 
@@ -324,7 +325,7 @@ It contains:
 
 This state is later needed during Round 2, because each leaf signer inside that subgroup must include $\bar{b}$ when computing its effective nonce binding $\check{b}$.
 
-**Top-level distinction: ** `SignAggExt` is used only for nested groups. At the root level:
+**Top-level distinction:** `SignAggExt` is used only for nested groups. At the root level:
 - there is no parent above the root
 - the top-level aggregate nonce tuple goes directly into session creation
 - no extra nested extension is applied
@@ -408,7 +409,7 @@ It contains:
 - `nonce_negated`: whether $R$ was negated
 - `key_negated`: whether $\tilde{X}$ has odd $y$
 
-**Why even-y handling matters?** BIP 340 signatures use x-only public keys and require the final nonce point to be treated canonically.
+**Why even-y handling matters** BIP 340 signatures use x-only public keys and require the final nonce point to be treated canonically.
 
 So the implementation:
 - negates $R$ if it has odd $y$
@@ -507,7 +508,7 @@ for cache, pk in zip(self.path_caches, self.path_pubkeys):
     c_check = c_check * a_i
 ```
 
-**Why this matters?** This is the key idea that makes Nested MuSig2 work. A leaf signer does not sign using only the top-level MuSig2 challenge $c$. Instead, it signs using:
+**Why this matters** This is the key idea that makes Nested MuSig2 work. A leaf signer does not sign using only the top-level MuSig2 challenge $c$. Instead, it signs using:
 - the root session values
 - the nested nonce bindings on its path
 - the key aggregation coefficients on its path
@@ -540,7 +541,7 @@ $$
 
 Those are the values Alice uses in Round 2.
 
-**How the implementation builds transcripts?** During `run_nested_musig2(...)`, the code traverses the tree recursively. As it descends:
+**How the implementation builds transcripts** During `run_nested_musig2(...)`, the code traverses the tree recursively. As it descends:
 - it appends the current parent cache to `path_caches`
 - it appends the child-node key for that level to `path_pubkeys`
 - it appends the subgroup’s `b_nested` value to `nested_nonce_bindings`
@@ -628,7 +629,7 @@ if session.nonce_negated:
 return key_part + nonce_part
 ```
 
-**Why this is different from ordinary MuSig2?** In ordinary MuSig2, the signer uses:
+**Why this is different from ordinary MuSig2** In ordinary MuSig2, the signer uses:
 - the top-level nonce binding $b$
 - the top-level challenge $c$
 - its coefficient $a_i$ inside one keyset
@@ -731,7 +732,7 @@ Before checking the equation, the implementation validates:
 
 If any of these checks fail, verification returns `False`.
 
-**Why this matters?** This step prevents malformed or inconsistent leaf signature shares from being aggregated into the final signature.
+**Why this matters** This step prevents malformed or inconsistent leaf signature shares from being aggregated into the final signature.
 
 In particular, verification is sensitive to:
 - the signer’s public nonce tuple
@@ -794,7 +795,7 @@ for s_i in partial_sigs:
 return session.R, s
 ```
 
-**Why this works?** Each leaf partial signature already includes:
+**Why this works** Each leaf partial signature already includes:
 - the signer’s private-key contribution
 - the nonce contribution
 - the path-dependent nested factors
