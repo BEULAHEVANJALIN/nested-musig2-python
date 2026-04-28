@@ -56,7 +56,7 @@ Key Points:
 ## Algorithm 1: KeyGen
 
 > **KeyGen():**
-> - $x \stackrel{\$}{\leftarrow} \mathbb{Z}_n^*$ (sampled uniformly at random from a CSPRNG; used as the private key)
+> - $x \stackrel{\\$}{\leftarrow} \mathbb{Z}_n^*$ (sampled uniformly at random from a CSPRNG; used as the private key)
 > - Compute $X := x \cdot G$ (public key, a point on the elliptic curve)
 > - return $(x, X)$
 
@@ -319,8 +319,8 @@ in the same way during nonce aggregation.
 
 It contains:
 - `cache`: the subgroup's key aggregation cache
-- `internal_agg_nonces`: $(R'_1, \ldots, R'_\nu)$
-- `external_nonces`: $(R_1, \ldots, R_\nu)$
+- `internal_agg_nonces`: $(R'\_1, \ldots, R'\_\nu)$
+- `external_nonces`: $(R\_1, \ldots, R\_\nu)$
 - `b_nested`: $\bar{b}$
 
 This state is later needed during Round 2, because each leaf signer inside that subgroup must include $\bar{b}$ when computing its effective nonce binding $\check{b}$.
