@@ -272,7 +272,8 @@ This tuple is then used in the next step to create the signing session.
 
 ## Algorithm 4: Nested Extension / SignAggExt
 
-`SignAggExt` is the nested-specific step that lets a subgroup expose a nonce tuple upward as if the whole subgroup were one ordinary MuSig2 signer. Inside a subgroup, child nonces are first aggregated normally. This gives an internal aggregate nonce tuple $(R'\_1, \ldots, R'\_\nu)$. Here $\tilde{X}_{\text{group}}$ denotes the aggregate public key of that subgroup. Then the subgroup computes a nested nonce binding coefficient $\bar{b} := H_{\overline{\text{non}}}(\tilde{X}_{\text{group}} \| R'\_1 \| \cdots \| R'\_\nu)$. Finally, each internal aggregate nonce is transformed into an external nonce:
+`SignAggExt` is the nested-specific step that lets a subgroup expose a nonce tuple upward as if the whole subgroup were one ordinary MuSig2 signer. Inside a subgroup, child nonces are first aggregated normally. This gives an internal aggregate nonce tuple $(R'\_1, \ldots, R'\_\nu)$. Here $\tilde{X}_{\text{group}}$ denotes the aggregate public key of that subgroup. 
+Then the subgroup computes a nested nonce binding coefficient $\bar{b}:=H\_{\overline{\text{non}}}(\tilde{X}\_{\text{group}}\|R'\_1\|\cdots\|R'\_\nu)$. Finally, each internal aggregate nonce is transformed into an external nonce:
 
 $$
 R\_j := \bar{b}^{j-1} \cdot R'\_j
