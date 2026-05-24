@@ -198,7 +198,7 @@ Important points:
 
 A more detailed explanation of the notation, algorithms, and code mapping is available in:
 
-- `docs/protocol-walkthrough.md`
+- `docs/protocol_walkthrough.md`
 
 ## Quick start
 
