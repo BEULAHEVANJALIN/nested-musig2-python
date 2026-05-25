@@ -209,6 +209,51 @@ def test_nested_group_round1_state_is_populated_consistently():
     assert group_ab.round1_state.cache.agg_pk == group_ab.cache.agg_pk
     print("Nested group round-one state is populated consistently")
 
+def test_bark_style_root_uses_nested_subgroup_keys():
+    """
+    Bark-style example:
+        root: Group_ABCD + Group_EF + S + Group_KL
+    where:
+        Group_ABCD = {A, B, C, D}
+        Group_EF   = {E, F}
+        Group_KL   = {K, L}
+    This checks that the root key is built from subgroup aggregate keys plus
+    the fixed/global cosigners, and that user F can sign successfully through
+    the nested branch Group_EF -> F.
+    """
+    alice = LeafSigner.generate("Alice")
+    bob = LeafSigner.generate("Bob")
+    carol = LeafSigner.generate("Carol")
+    dave = LeafSigner.generate("Dave")
+    eve = LeafSigner.generate("Eve")
+    frank = LeafSigner.generate("Frank")
+    server = LeafSigner.generate("Server")
+    key_k = LeafSigner.generate("K")
+    key_l = LeafSigner.generate("L")
+    group_abcd = NestedGroup("Group_ABCD", [alice, bob, carol, dave])
+    group_ef = NestedGroup("Group_EF", [eve, frank])
+    group_kl = NestedGroup("Group_KL", [key_k, key_l])
+    top_members = [group_abcd, group_ef, server, group_kl]
+    msg = b"bark-style nested branch for user F"
+    session, root_cache, nested_bindings = _make_session(top_members, msg)
+    expected_root = key_agg([
+        group_abcd.cache.agg_pk,
+        group_ef.cache.agg_pk,
+        server.pubkey,
+        group_kl.cache.agg_pk,
+    ]).agg_pk
+    assert root_cache.agg_pk == expected_root
+    transcript = NestedSigningTranscript(
+        session=session,
+        path_caches=[root_cache, group_ef.cache],
+        path_pubkeys=[group_ef.cache.agg_pk, frank.pubkey],
+        nested_nonce_bindings=[nested_bindings["Group_EF"]],
+    )
+    s_i = nested_sign(transcript, frank.nonce, frank.privkey)
+    assert verify_nested_partial_sig(transcript, frank.nonce.pub_nonces, s_i)
+    assert int(transcript.nonce_factor()) == int(session.b * nested_bindings["Group_EF"])
+    print("Bark-style root uses subgroup aggregate keys and user F signs via Group_EF")
+
 def test_many_sessions():
     """
     Run multiple nested signing sessions to exercise even-y handling.

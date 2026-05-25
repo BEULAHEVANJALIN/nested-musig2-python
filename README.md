@@ -65,6 +65,28 @@ then the root aggregates:
 
 rather than directly aggregating all four leaf keys at the root level.
 
+## Bark-style example
+This nested construction is also useful for Bark-style rounds.
+
+In the sense used here, a Bark round may require multiple node-level BIP340 signatures, and each such node may have its own MuSig participant set.
+
+The important distinction is:
+- the Bark tree describes which nodes need signatures
+- nested MuSig describes how the participant set inside one such node can be structured recursively
+
+For example, with users `A, B, C, D, E, F`, a fixed server cosigner `S`, and
+external cosigners `K, L`, a flat root-facing MuSig can be viewed as:
+- `A + B + C + D + E + F + S + K + L`
+
+A nested alternative is:
+- `(A + B + C + D) + (E + F) + S + (K + L)`
+
+This does not change the number of Bark signatures. It changes the top-level MuSig participants inside one such signature from a large flat list to a smaller set of subgroup aggregate keys plus the fixed/global cosigners.
+
+A Bark-specific note is available in:
+- `docs/bark_nested_musig.md`
+
+
 ## Protocol shape
 
 At a high level, the nested signing flow is:
