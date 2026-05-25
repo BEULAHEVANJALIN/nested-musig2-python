@@ -265,8 +265,14 @@ Even though the internal signing process is recursive, the final result is simpl
 - an aggregate scalar $s$
 - a root aggregate public key $\tilde{X}$
 
-Together these form a standard Schnorr signature:
+Together, these form a standard Schnorr signature:
 
 - $\sigma = (R, s)$
 
 So nested signing changes how signers cooperate internally, but not the format of the signature verified at the end.
+
+---
+
+This repository is a research-style reference implementation intended to clarify the Nested MuSig2 construction and validate its signing flow. It is not a production-ready signing infrastructure. The focus is on the correctness of the algebra, the recursive structure, and testability rather than on distributed deployment, hardened networking, or operational security engineering.
+
+
